@@ -1,0 +1,392 @@
+{
+  "shader graphs/procedural flare": {
+    "_procedural_flare_profile_vflip": 0.0,
+    "_gradient": 0.0,
+    "_gradient_scale": 0.0,
+    "_gradient_pinch": 1.0,
+    "_flare_tiling": 1.0,
+    "_noise": 0.0,
+    "_spikes": 0.5,
+    "_halo": 1.0,
+    "_arms": 1.0,
+    "_arms_tiling": 4.0,
+    "_arms_width": 0.0,
+    "_arms_rotation": 0.0,
+    "_halo_scale": [
+      -0.5,
+      5.0,
+      0.0,
+      0.0
+    ],
+    "_depth_fade": 1.0,
+    "_chromatics": 0.0,
+    "_flare_color": [
+      1.0,
+      1.0,
+      1.0,
+      0.0
+    ],
+    "_focus": 0.0,
+    "_focus_intensity_power_scale": [
+      0.0,
+      5.0,
+      5.0,
+      0.0
+    ],
+    "_flicker_intensity": 0.0,
+    "_flicker_speed": 0.10000000149011612
+  },
+  "shader graphs/particle composite generic_master": {
+    "_comptexture_vflip": 0.0,
+    "_engineer_build_beam_uv_scale": 0.0,
+    "_engineer_build_beam_x_stretch": 1.0,
+    "_flamecolor": [
+      0.9339622855186462,
+      0.5006306171417236,
+      0.004405492916703224,
+      0.0
+    ],
+    "_flameboost": 2.0,
+    "_diffusecolor": [
+      0.9150943160057068,
+      0.8601331114768982,
+      0.8071823120117188,
+      0.0
+    ],
+    "_comp_remap_min": [
+      0.0,
+      0.0,
+      0.0,
+      0.0
+    ],
+    "_comp_remap_max": [
+      1.0,
+      1.0,
+      1.0,
+      1.0
+    ],
+    "_ambientcolor": [
+      0.5354663729667664,
+      0.5604938268661499,
+      0.5943396091461182,
+      0.0
+    ],
+    "_opacitypower": 0.0,
+    "_opacity": 1.0,
+    "_opacitycrunch": 0.0,
+    "_depthfade": 0.5,
+    "_depthfadepower": 0.5,
+    "_waterheightfade": [
+      0.0,
+      0.5,
+      0.0,
+      0.0
+    ],
+    "_depth_contact_additive": 0.0,
+    "_depth_contact_additive_color": [
+      1.0,
+      1.0,
+      1.0,
+      0.0
+    ],
+    "_depth_contact_range": 0.0,
+    "_depth_contact_power": 1.0,
+    "_x": 8.0,
+    "_y": 8.0,
+    "_texture_offset_by_r": [
+      0.0,
+      0.0,
+      0.0,
+      0.0
+    ],
+    "_uv_rotate": 0.0,
+    "_water_cutoff_height": 999.0,
+    "_fresnelopacity": 0.0,
+    "_fresnel_invert": 0.0,
+    "_motionvector_vflip": 0.0,
+    "_motionvectorintensity": 0.019999999552965164,
+    "_motion_vector_extra": [
+      0.0,
+      0.0,
+      0.0,
+      0.0
+    ],
+    "_customflamegradient_vflip": 0.0,
+    "_custom_flame_gradient_intensity": 1.0,
+    "_microdetailer_vflip": 0.0,
+    "_microdetailer_intensity": 0.0,
+    "_microdetailer_rotation": 0.0,
+    "_animation_by_time": 0.0,
+    "_trail_shadows": 0.0,
+    "_billboard_shadows": 0.0,
+    "_self_shadow_alpha_influence": 0.0,
+    "_self_shadow_intensity": 0.0,
+    "_self_shadow_contrast": 0.0,
+    "_mask_vflip": 0.0,
+    "_mask_diffuse_contribution": 1.0,
+    "_mask_alpha_contribution": 0.0,
+    "_mask_rotate": 0.0,
+    "_mask_power": 1.0,
+    "_env_direct_lighting_color": [
+      1.0,
+      1.0,
+      1.0,
+      0.0
+    ],
+    "_env_direct_lighting_intensity": 60000.0,
+    "_env_indirect_lighting_color": [
+      1.0,
+      1.0,
+      1.0,
+      0.0
+    ],
+    "_env_indirect_lighting_intensity": 30000.0,
+    "_distortion_map_vflip": 0.0,
+    "_distortion_offset_random_from_r": 1.0,
+    "_distortion_map_scale": 1.0,
+    "_distortion_wind_intensity": [
+      0.0,
+      0.0,
+      0.0,
+      0.0
+    ],
+    "_distortion_mask_vflip": 0.0,
+    "_distortion_mask_power": 1.0,
+    "_distortion_intensity": [
+      0.0,
+      0.0,
+      0.0,
+      0.0
+    ],
+    "_world_offset_mask_vflip": 0.0,
+    "_world_offset_mask_power": 1.0,
+    "_world_offset_rotation": 0.0,
+    "_world_offset": [
+      0.0,
+      0.0,
+      0.0,
+      0.0
+    ],
+    "_billboard": 0.0,
+    "_billboardpivot": [
+      0.5,
+      0.5,
+      0.0,
+      0.0
+    ],
+    "_billboardrotate": 0.0
+  },
+  "shader graphs/particle solid_frame blend csg": {
+    "_x": 8.0,
+    "_y": 8.0,
+    "_motionvectorintensity": 0.019999999552965164,
+    "_diffusecolor": [
+      1.0,
+      1.0,
+      1.0,
+      0.0
+    ],
+    "_opacitypower": 0.5,
+    "_depthfade": 0.5,
+    "_opacity": 4.0,
+    "_fresnelopacity": 1.0,
+    "_opacitycrunch": 0.0,
+    "_alphacliptreshold": 0.03999999910593033,
+    "_alphacliptresholdshadow": 0.03999999910593033,
+    "_motionvector_vflip": 0.0,
+    "_comptexture_vflip": 0.0,
+    "_normals_vflip": 0.0
+  },
+  "shader graphs/particle straight_frame blend csg": {
+    "_x": 8.0,
+    "_y": 8.0,
+    "_motionvectorintensity": 0.019999999552965164,
+    "_diffusecolor": [
+      1.0,
+      1.0,
+      1.0,
+      0.0
+    ],
+    "_opacitypower": 0.5,
+    "_depthfade": 0.5,
+    "_opacity": 4.0,
+    "_fresnelopacity": 1.0,
+    "_opacitycrunch": 0.0,
+    "_motionvector_vflip": 0.0,
+    "_comptexture_vflip": 0.0
+  },
+  "rts/shield/shied forcefield csg v3": {
+    "_emissive_extra": 0.0,
+    "_emissive_color": [
+      1.0,
+      1.0,
+      1.0,
+      0.0
+    ],
+    "_metallic": 0.5,
+    "_smoothness": 0.5,
+    "_alpha_lines_remap": [
+      0.0,
+      1.0,
+      0.0,
+      1.0
+    ],
+    "_alpha_remap": [
+      0.0,
+      0.0,
+      0.0,
+      0.0
+    ],
+    "_energy_normal_intensity": 0.0,
+    "_energy_distortion_intensity": 0.0,
+    "_energy_intensity": [
+      1.0,
+      1.0,
+      1.0,
+      0.0
+    ],
+    "_pan_speed": [
+      0.07999999821186066,
+      0.07999999821186066,
+      0.0,
+      0.0
+    ],
+    "_diffuse_color": [
+      1.0,
+      1.0,
+      1.0,
+      0.0
+    ],
+    "_shieldpassopacitymin": 0.0,
+    "_backfaceopacity": 1.0,
+    "_showblendremap": [
+      0.0,
+      1.0,
+      0.0,
+      0.0
+    ],
+    "_damage_color": [
+      0.0,
+      0.0,
+      0.0,
+      0.0
+    ],
+    "_damage_texture_panner": [
+      0.0,
+      0.0,
+      0.0,
+      0.0
+    ],
+    "_damage_texture_mask_panner": [
+      0.0,
+      0.0,
+      0.0,
+      0.0
+    ],
+    "_damage_distortion_intensity": 0.0,
+    "_damage_progress": 0.0,
+    "_damage_curve": 1.0,
+    "_emissive_vflip": 0.0,
+    "_alpha_vflip": 0.0,
+    "_alpha_lines_vflip": 0.0,
+    "_energy_distortion_vflip": 0.0,
+    "_energy_normals_vflip": 0.0,
+    "_energy_vflip": 0.0,
+    "_showblend_vflip": 0.0,
+    "_damage_texture_vflip": 0.0,
+    "_damage_texture_mask_vflip": 0.0,
+    "_fresnel_alpha_power": 1.0,
+    "_fresnel_alpha_intensity": 0.0,
+    "_center_fade_power": 1.0,
+    "_center_fade_power_with_distance": 0.0,
+    "_center_fade_intensity": 1.0,
+    "_edge_soften_power": 1.7999999523162842,
+    "_edge_soften_multiply": 20.0,
+    "_depth_fade_glow": [
+      1.0,
+      1.0,
+      1.0,
+      0.0
+    ],
+    "_depth_fade_glow_range": [
+      0.10000000149011612,
+      0.0,
+      0.0,
+      0.0
+    ],
+    "_depth_fade_glow_power": 1.0,
+    "_glowedgeopacity": 1.0,
+    "_glowedgerange": [
+      0.5,
+      0.0,
+      0.0,
+      0.0
+    ],
+    "_glowedgepower": 6.0
+  },
+  "shader graphs/trail animated vertex color": {
+    "_frames": 16.0,
+    "_diffuse_vflip": 0.0,
+    "_tiling": [
+      1.0,
+      1.0,
+      0.0,
+      0.0
+    ],
+    "_diffuse_color": [
+      1.0,
+      1.0,
+      1.0,
+      0.0
+    ],
+    "_ambient_color": [
+      1.0,
+      1.0,
+      1.0,
+      0.0
+    ],
+    "_flame_color": [
+      1.0,
+      1.0,
+      1.0,
+      0.0
+    ],
+    "_flamelifetimeremap": [
+      0.0,
+      1.0,
+      0.0,
+      0.0
+    ],
+    "_flamepower": 1.0,
+    "_animation_speed_multiplier": 1.0,
+    "_anim_from_g": 1.0,
+    "_anim_by_time": 0.0,
+    "_g_pull": 0.0,
+    "_fresnel_invert": 0.0,
+    "_fresnel_opacity": 0.0,
+    "_trail_shadows": 0.0,
+    "_opacity": 1.0,
+    "_x_flow": 0.0,
+    "_distortion_vflip": 0.0,
+    "_world_distortion_scale": 1.0,
+    "_distortion_uvxworld": 1.0,
+    "_distortion_intensity": 0.0,
+    "_distortion_trail_power_curve": 1.0,
+    "_distortionlifetimeremap": [
+      0.0,
+      1.0,
+      0.0,
+      0.0
+    ],
+    "_widthbegining": 0.20000000298023224,
+    "_widthending": 0.20000000298023224,
+    "_widthpower": 1.0,
+    "_faderemap": [
+      0.0,
+      1.0,
+      0.0,
+      0.0
+    ],
+    "_fadepower": 0.0
+  }
+}

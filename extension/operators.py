@@ -51,7 +51,18 @@ def _unit_id(context):
 
 
 def _output_dir(context):
-    return ensure_output_dir(_settings(context).output_dir)
+    settings = _settings(context)
+    # Once a mod project is active every export shares its canonical unit
+    # folder. This prevents model/skeleton/animation/texture files drifting
+    # into unrelated ad-hoc output paths.
+    try:
+        from .mod_projects import active_project
+        project = active_project(context, required=False)
+        if project is not None:
+            return ensure_output_dir(project / "Units" / _unit_id(context) / "LOD0")
+    except (ImportError, OSError, ValueError):
+        pass
+    return ensure_output_dir(settings.output_dir)
 
 
 def _active_armature(context):
@@ -257,6 +268,11 @@ class SANCTUARY_OT_import_sanmodel(Operator, ImportHelper):
         settings = _settings(context)
         path = Path(self.filepath)
         try:
+            from .shield_import import reuse_model_import
+            reused=reuse_model_import(context,path)
+            if reused:
+                self.report({'INFO'},'Refreshed blueprint shields on the existing imported generator')
+                return {'FINISHED'}
             model = parse_sanmodel_file(path)
             skeleton_obj = None
             companion = _companion_skeleton_path(path)
@@ -276,11 +292,9 @@ class SANCTUARY_OT_import_sanmodel(Operator, ImportHelper):
                 mirror_uv=False,
             )
             obj["san_source_model_path"] = str(path)
-            # If the filename follows a unit convention, adopt that unit ID.
+            # Imported reference units never replace the project's export ID.
             stem = path.stem.lower()
-            if stem.endswith("_lod0"):
-                settings.unit_id = stem[:-5]
-            uid = settings.unit_id or stem.replace("_lod0", "")
+            uid = stem[:-5] if stem.endswith("_lod0") else stem
             loaded = []
             if settings.import_companion_textures:
                 try:
@@ -301,6 +315,10 @@ class SANCTUARY_OT_import_sanmodel(Operator, ImportHelper):
                         console(f"Companion animation import failed: {anim_exc}")
             # Keep the mesh active so its material is immediately visible and the
             # animation preview panel can resolve its linked armature.
+            from .shield_import import attach_imported_unit
+            attach_imported_unit(context,obj,skeleton_obj,model_path=path)
+            if obj.get('san_shield_import_diagnostics'):
+                self.report({'WARNING'},obj['san_shield_import_diagnostics'])
             bpy.ops.object.select_all(action="DESELECT")
             obj.select_set(True)
             context.view_layer.objects.active = obj
@@ -434,15 +452,32 @@ class SANCTUARY_OT_animation_add_current(Operator):
 
 class SANCTUARY_OT_animation_add_all(Operator):
     bl_idname = "sanctuary.animation_add_all"
-    bl_label = "Add All Actions"
-    bl_description = "Add every Blender Action that is not already in the Sanctuary animation export list"
+    bl_label = "Add All Selected Actions"
+    bl_description = "Add selected Action datablocks, or all Actions owned by the selected armatures, without adding animations from unrelated imported models"
 
     def execute(self, context):
         settings = _settings(context)
         existing = {item.action for item in settings.animations if item.action}
+        selected_actions = {
+            item for item in (getattr(context, "selected_ids", None) or ())
+            if isinstance(item, bpy.types.Action)
+        }
+        selected_armatures = {
+            obj for obj in (getattr(context, "selected_objects", None) or ())
+            if getattr(obj, "type", None) == "ARMATURE"
+        }
+        if selected_actions:
+            candidates = selected_actions
+        else:
+            candidates = {
+                action for action in bpy.data.actions
+                if selected_armatures.intersection(_action_owner_armatures(action))
+            }
+        if not candidates:
+            self.report({"WARNING"}, "Select one or more Actions, or select the armatures that own them")
+            return {"CANCELLED"}
         added = 0
-        default_fps = float(settings.animation_default_fps)
-        for action in sorted(bpy.data.actions, key=lambda a: a.name.lower()):
+        for action in sorted(candidates, key=lambda a: a.name.lower()):
             if action in existing:
                 continue
             item = settings.animations.add()
@@ -467,7 +502,7 @@ class SANCTUARY_OT_animation_add_all(Operator):
             added += 1
         if settings.animations:
             settings.animation_index = min(settings.animation_index, len(settings.animations) - 1)
-        self.report({"INFO"}, f"Added {added} Actions")
+        self.report({"INFO"}, f"Added {added} selected Action{'s' if added != 1 else ''}")
         return {"FINISHED"}
 
 
@@ -730,6 +765,19 @@ class SANCTUARY_OT_export_complete_assets(Operator):
             return {"CANCELLED"}
 
 
+class SANCTUARY_OT_update_team_preview(Operator):
+    bl_idname="sanctuary.update_team_preview";bl_label="Apply Faction Color Preview"
+    bl_description="Update faction-color nodes in imported Sanctuary preview materials"
+    def execute(self,context):
+        color=context.scene.sanctuary_toolkit.preview_team_color;changed=0
+        for material in bpy.data.materials:
+            if not material.use_nodes:continue
+            node=material.node_tree.nodes.get("SMT Team Color")
+            if node:node.outputs[0].default_value=color;changed+=1
+        self.report({"INFO"},f"Updated {changed} Sanctuary preview material(s)")
+        return {"FINISHED"}
+
+
 CLASSES = (
     SANCTUARY_OT_import_sanmodel,
     SANCTUARY_OT_export_sanmodel,
@@ -748,6 +796,7 @@ CLASSES = (
     SANCTUARY_OT_preview_animation_restore,
     SANCTUARY_OT_validate_rig,
     SANCTUARY_OT_export_complete_assets,
+    SANCTUARY_OT_update_team_preview,
 )
 
 

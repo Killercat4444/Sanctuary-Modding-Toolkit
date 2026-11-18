@@ -1,0 +1,29 @@
+schema_version = "1.0.0"
+
+id = "sanctuary_modding_toolkit_v151"
+version = "2.2.10"
+name = "Sanctuary Studio"
+tagline = "Import, author, package, and deploy Sanctuary game assets"
+maintainer = "OpenAI + Sanctuary modding workflow"
+type = "add-on"
+
+blender_version_min = "4.2.0"
+
+license = [
+  "SPDX:GPL-3.0-or-later",
+]
+
+tags = [
+  "Import-Export",
+  "Game Engine",
+]
+
+[permissions]
+files = "Read game assets and create, package, and deploy mod files"
+
+[build]
+paths_exclude_pattern = [
+  "__pycache__/",
+  "*.pyc",
+  "Releases/",
+]

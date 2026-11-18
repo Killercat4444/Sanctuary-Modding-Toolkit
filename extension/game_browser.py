@@ -11,6 +11,7 @@ import bpy
 import bpy.utils.previews
 import numpy as np
 from bpy.types import Operator, Panel
+from bpy.props import StringProperty
 
 from .dds_tools import decode_dds_top
 from .material_io import apply_sanctuary_material, classify_texture_name
@@ -30,7 +31,7 @@ _DATABASE_BY_ID = {}
 _PREVIEWS = None
 _LAST_CLICK_ID = None
 _LAST_CLICK_TIME = 0.0
-_DATABASE_SCHEMA_VERSION = 6
+_DATABASE_SCHEMA_VERSION = 10
 
 
 def _archive_member_map(zf):
@@ -45,12 +46,19 @@ def _read_template(path):
 
 
 def _quoted_field(text, field):
-    m = re.search(rf"\b{re.escape(field)}\s*=\s*[\"']([^\"']+)[\"']", text)
-    return m.group(1).strip() if m else ""
+    # Identity belongs to general, not a weapon/audio table or a comment.
+    from .lua_document import Document
+    try:
+        value = Document(text).scalar(('general', field), '')
+    except ValueError:
+        return ''
+    return value.strip() if isinstance(value, str) else ''
 
 
 def _tags(text):
-    return set(re.findall(r"[\"']([A-Z0-9_]+)[\"']", text.upper()))
+    from .lua_document import Document
+    try: return set(v.upper() for v in Document(text).strings(('tags',)))
+    except ValueError: return set()
 
 
 def _infer_faction(text, unit_id):
@@ -107,7 +115,7 @@ def _unit_aliases(unit_id, display_name, unit_type, text, faction, tech, domain)
     # Search is intentionally based on user-facing identity fields only.
     # Do NOT index template tags such as BUILDABLE_BY_T1_ENGINEER; those made
     # a search for "engineer" return nearly every unit an engineer can build.
-    aliases = [unit_id, display_name, unit_type, faction, tech, domain]
+    aliases = [unit_id, display_name, unit_type, _quoted_field(text, "name"), faction, tech, domain]
     if unit_id.endswith("0000"):
         aliases.append("commander")
     return " ".join(a for a in aliases if a).lower()
@@ -200,9 +208,13 @@ def build_database(engine_root):
                 texture_members.setdefault(kind, member)
 
             records.append({
+                "record_key": f"base:{unit_id}",
+                "source_kind": "BASE",
+                "source_label": "Base Game",
                 "unit_id": unit_id,
                 "display_name": display_name,
                 "unit_type": unit_type,
+                "unit_name": _quoted_field(text, "name"),
                 "faction": faction,
                 "tech_level": tech,
                 "domain": domain,
@@ -217,6 +229,8 @@ def build_database(engine_root):
                 "template_path": str(tp),
                 "search": _unit_aliases(unit_id, display_name, unit_type, text, faction, tech, domain),
             })
+
+    records.extend(_discover_mod_records())
 
     payload = {
         "schema_version": _DATABASE_SCHEMA_VERSION,
@@ -234,7 +248,105 @@ def build_database(engine_root):
 def _set_database(records):
     global _DATABASE, _DATABASE_BY_ID
     _DATABASE = list(records)
-    _DATABASE_BY_ID = {r["unit_id"]: r for r in _DATABASE}
+    _DATABASE_BY_ID = {}
+    for record in _DATABASE:
+        key=record.get("record_key",record["unit_id"])
+        _DATABASE_BY_ID[key]=record
+        _DATABASE_BY_ID.setdefault(record["unit_id"],record)
+
+
+def _loose_record(unit_id, lod, template, source_kind, source_label, key, icon_path=""):
+    text=_read_template(template) if template else ""
+    display_name=_quoted_field(text,"displayName") or unit_id
+    unit_type=_quoted_field(text,"unitTypeName")
+    faction=_infer_faction(text,unit_id)
+    if source_kind=="MOD_TAGGED":faction=source_label
+    base=Path(lod)
+    files={p.name.lower():p for p in base.iterdir() if p.is_file()} if base.is_dir() else {}
+    def exact(suffix):return str(files.get((unit_id+suffix).lower(),""))
+    textures={}
+    for p in files.values():
+        kind=classify_texture_name(p.name)
+        if kind and kind not in textures:textures[kind]=str(p)
+    return {"record_key":key,"source_kind":source_kind,"source_label":source_label,
+        "unit_id":unit_id,"display_name":display_name,"unit_type":unit_type,"unit_name":_quoted_field(text,"name"),"faction":faction,
+        "tech_level":_infer_tech(text,unit_id,display_name),"domain":_infer_domain(text,unit_id),
+        "model_path":exact("_lod0.sanmodel"),"skeleton_path":exact(".sanskeleton"),
+        "animation_path":exact(".sananimation"),"material_path":exact("_lod0.sanmaterial"),
+        "albedo_path":textures.get("albedo",""),"mask_path":textures.get("mask",""),"normal_path":textures.get("normal",""),
+        "template_path":str(template or ""),"icon_path":str(icon_path or ""),
+        "search":_unit_aliases(unit_id,display_name,unit_type,text,faction,_infer_tech(text,unit_id,display_name),_infer_domain(text,unit_id))}
+
+
+def _discover_mod_records():
+    records=[];prefs=get_addon_preferences()
+    if not prefs:return records
+    library=Path(bpy.path.abspath(prefs.mod_library_root)).expanduser() if prefs.mod_library_root else None
+    if library and library.is_dir():
+        manifests = list(library.glob("*/smt_project.json"))
+        for project in library.iterdir():
+            if project.is_dir() and not (project / "smt_project.json").is_file():
+                manifests.extend(project.glob("smt_*.json"))
+        if (library/"smt_project.json").is_file():
+            manifests.append(library/"smt_project.json")
+        for manifest_path in sorted(set(manifests)):
+            try:
+                manifest=json.loads(manifest_path.read_text(encoding="utf-8"));project=manifest_path.parent
+                if manifest.get("format") != "Sanctuary Mod Toolkit Project":continue
+                kind="MOD_TAGGED" if manifest.get("tagged_faction") else "MOD_UNTAGGED"
+                unit_lods = {p.parent.name.lower():p for p in (project/"Units").glob("*/LOD0")}
+                templates = {p.stem.lower():p for p in (project/"Lua").rglob('*')
+                             if p.is_file() and p.suffix.lower() in ('.santp', '.lua')
+                             and re.fullmatch(r'u[a-z]{2}\d{4}', p.stem.lower())}
+                for uid in sorted(set(unit_lods) | set(templates)):
+                    if not re.fullmatch(r"[a-z]{3}\d{4}",uid):continue
+                    lod=unit_lods.get(uid,project/"Units"/uid/"LOD0")
+                    template=templates.get(uid,project/"Lua/common/units/unitsTemplates"/uid/f"{uid}.santp")
+                    icon=project/"UI/Sprites/Icons/Units"/f"{uid}.dds"
+                    record = _loose_record(uid,lod,template if template.is_file() else None,kind,
+                        manifest.get("faction_name") or manifest.get("name") or project.name,
+                        f"project:{project.name}:{uid}",icon if icon.is_file() else "")
+                    record['project_root'] = str(project)
+                    record['blueprint_missing'] = not template.is_file()
+                    records.append(record)
+            except Exception as exc:console(f"Could not index SMT project {manifest_path}: {exc}")
+    # The live deployment is indexed as an untagged source unless a custom
+    # faction tag in its corresponding Lua template proves otherwise.
+    mods=Path(bpy.path.abspath(prefs.mods_root)).expanduser() if prefs.mods_root else None
+    pack=mods/"Units.sanpack" if mods else None
+    if pack and pack.is_file():
+        try:
+            ui_mod_pack=mods/"UI.sanpack";ui_names={}
+            if ui_mod_pack.is_file():
+                with zipfile.ZipFile(ui_mod_pack) as ui_archive:ui_names=_archive_member_map(ui_archive)
+            ownership={}
+            for dep in (mods/".smt_deployments").glob("*.json") if (mods/".smt_deployments").is_dir() else ():
+                try:
+                    data=json.loads(dep.read_text(encoding="utf-8"))
+                    for uid in data.get("units",[]):ownership[str(uid).lower()]=data
+                except Exception as exc:console(f"Could not read deployment metadata {dep}: {exc}")
+            with zipfile.ZipFile(pack) as z:
+                names=_archive_member_map(z)
+                ids=sorted({m.group(1).lower() for n in z.namelist() if (m:=re.match(r"(?i)^Units/([a-z]{3}\d{4})/LOD0/.*_lod0\.sanmodel$",n))})
+                for uid in ids:
+                    tp=mods/"Lua/common/units/unitsTemplates"/uid/f"{uid}.santp";text=_read_template(tp)
+                    owner=ownership.get(uid,{})
+                    faction=owner.get("faction_name") or _infer_faction(text,uid)
+                    kind="MOD_TAGGED" if owner.get("tagged_faction") else "MOD_UNTAGGED"
+                    base=f"units/{uid}/lod0/"
+                    def member(s):return names.get((base+uid+s).lower(),"")
+                    textures=_texture_members_for_base(names,base)
+                    records.append({"record_key":f"deployed:{uid}","source_kind":kind,"source_label":"Live Mods",
+                        "unit_id":uid,"display_name":_quoted_field(text,"displayName") or uid,
+                        "unit_type":_quoted_field(text,"unitTypeName"),"unit_name":_quoted_field(text,"name"),"faction":faction,"tech_level":_infer_tech(text,uid,_quoted_field(text,"displayName")),
+                        "domain":_infer_domain(text,uid),"units_pack":str(pack),"model_member":member("_lod0.sanmodel"),
+                        "skeleton_member":member(".sanskeleton"),"animation_member":member(".sananimation"),
+                        "material_member":member("_lod0.sanmaterial"),"albedo_member":textures.get("albedo",""),
+                        "mask_member":textures.get("mask",""),"normal_member":textures.get("normal",""),"template_path":str(tp),
+                        "icon_member":ui_names.get(f"ui/sprites/icons/units/{uid}.dds",""),"icon_pack":str(ui_mod_pack) if ui_names else "",
+                        "search":_unit_aliases(uid,_quoted_field(text,"displayName"),_quoted_field(text,"unitTypeName"),text,faction,_infer_tech(text,uid,""),_infer_domain(text,uid))})
+        except Exception as exc:console(f"Could not index live mods: {exc}")
+    return records
 
 
 def load_database():
@@ -268,7 +380,7 @@ def database_needs_upgrade():
         return True
     records = payload.get("records", [])
     return bool(records and any(
-        "tech_level" not in r or "domain" not in r or "albedo_member" not in r
+        "tech_level" not in r or "domain" not in r or "unit_name" not in r or "albedo_member" not in r
         for r in records
     ))
 
@@ -283,7 +395,7 @@ def _matches_search(record, query):
     # domain, build tags and blueprint metadata belong to the checkbox filters,
     # not the text search. Thus "engineer" returns Engineer/Engineering Station
     # names rather than everything an engineer can build.
-    fields = ("unit_id", "display_name", "unit_type")
+    fields = ("unit_id", "display_name", "unit_type", "unit_name")
     hay = " ".join(str(record.get(k, "")) for k in fields).casefold()
     if str(record.get("unit_id", "")).lower().endswith("0000"):
         hay += " commander"
@@ -291,34 +403,13 @@ def _matches_search(record, query):
 
 
 def _matches_filters(record, settings):
-    faction_enabled = {
-        "Chosen": settings.browser_faction_chosen,
-        "Guard": settings.browser_faction_guard,
-        "EDA": settings.browser_faction_eda,
-        "Other": settings.browser_faction_other,
-    }
-    if not faction_enabled.get(record.get("faction", "Other"), settings.browser_faction_other):
-        return False
-
-    tech_enabled = {
-        "COMMANDER": settings.browser_tech_commander,
-        "T1": settings.browser_tech1,
-        "T2": settings.browser_tech2,
-        "T3": settings.browser_tech3,
-        "T4": settings.browser_tech4,
-        "OTHER": settings.browser_tech_other,
-    }
-    if not tech_enabled.get(record.get("tech_level", "OTHER"), settings.browser_tech_other):
-        return False
-
-    domain_enabled = {
-        "LAND": settings.browser_domain_land,
-        "AIR": settings.browser_domain_air,
-        "NAVY": settings.browser_domain_navy,
-        "STRUCTURE": settings.browser_domain_structure,
-        "OTHER": settings.browser_domain_other,
-    }
-    return domain_enabled.get(record.get("domain", "OTHER"), settings.browser_domain_other)
+    if not settings.browser_show_live_mods and record.get("source_label") == "Live Mods":return False
+    if settings.browser_source!="ALL" and record.get("source_kind","BASE")!=settings.browser_source:return False
+    faction=record.get("faction","Other")
+    category=faction.upper() if faction in {"Chosen","Guard","EDA","Other"} else "CUSTOM"
+    if settings.browser_faction!="ALL" and category!=settings.browser_faction:return False
+    if settings.browser_tech!="ALL" and record.get("tech_level","OTHER")!=settings.browser_tech:return False
+    return settings.browser_domain=="ALL" or record.get("domain","OTHER")==settings.browser_domain
 
 
 def filtered_units(settings, query_override=None):
@@ -326,6 +417,7 @@ def filtered_units(settings, query_override=None):
     query = settings.browser_search if query_override is None else query_override
     out = [r for r in records if _matches_search(r, query) and _matches_filters(r, settings)]
     out.sort(key=lambda r: (
+        {"BASE":0,"MOD_TAGGED":1,"MOD_UNTAGGED":2}.get(r.get("source_kind"),9),
         {"Chosen": 0, "Guard": 1, "EDA": 2}.get(r.get("faction"), 9),
         {"COMMANDER": 0, "T1": 1, "T2": 2, "T3": 3, "T4": 4, "OTHER": 9}.get(r.get("tech_level"), 9),
         r.get("display_name", ""),
@@ -481,6 +573,15 @@ def question_icon_id():
 
 
 def icon_id_for_record(record):
+    loose=record.get("icon_path")
+    if loose and Path(loose).is_file():
+        key="loose:"+record.get("record_key",record["unit_id"])
+        pcoll=_ensure_previews()
+        if key in pcoll:return pcoll[key].icon_id
+        try:
+            rgba=decode_dds_top(Path(loose).read_bytes());cache_file=icon_cache_dir()/(re.sub(r"[^A-Za-z0-9_-]","_",key)+".png")
+            _write_png(cache_file,rgba);return _preview_from_path(key,cache_file) or question_icon_id()
+        except Exception as exc:console(f"Could not decode mod icon {loose}: {exc}");return question_icon_id()
     member = record.get("icon_member")
     if not member:
         return question_icon_id()
@@ -492,7 +593,7 @@ def icon_id_for_record(record):
     payload = get_database_payload()
     if not payload:
         return question_icon_id()
-    ui_pack = Path(payload.get("ui_pack", ""))
+    ui_pack = Path(record.get("icon_pack") or payload.get("ui_pack", ""))
     if not ui_pack.is_file():
         return question_icon_id()
 
@@ -516,21 +617,30 @@ def import_unit_from_database(context, unit_id, include_skeleton=True, include_t
     record = _DATABASE_BY_ID.get(unit_id)
     if not record:
         raise ValueError(f"Unit '{unit_id}' is not in the indexed database")
-    payload = get_database_payload()
-    if not payload:
-        raise ValueError("Unit database metadata is unavailable; rebuild the database")
-    units_pack = Path(payload["units_pack"])
-    if not units_pack.is_file():
-        raise FileNotFoundError(units_pack)
-    if not record.get("model_member"):
-        raise ValueError(f"No LOD0 .sanmodel was indexed for {unit_id}")
+    unit_id=record["unit_id"]
+    from .shield_import import reuse_database_import
+    reused=reuse_database_import(context,record,(include_skeleton,include_textures,include_animations))
+    if reused:return reused
+    payload = get_database_payload() or {}
+    units_pack = Path(record.get("units_pack") or payload.get("units_pack", ""))
+    loose=bool(record.get("model_path"))
+    if not loose and not units_pack.is_file():raise FileNotFoundError(units_pack)
+    if not loose and not record.get("model_member"):raise ValueError(f"No LOD0 .sanmodel was indexed for {unit_id}")
 
     settings = context.scene.sanctuary_toolkit
-    with zipfile.ZipFile(units_pack, "r") as zf:
-        model = parse_sanmodel_bytes(zf.read(record["model_member"]))
+    archive=zipfile.ZipFile(units_pack,"r") if not loose else None
+    def blob(member_key,path_key):
+        if loose:
+            p=Path(record.get(path_key,""));return p.read_bytes() if p.is_file() else None
+        member=record.get(member_key);return archive.read(member) if member else None
+    try:
+        model_blob=blob("model_member","model_path")
+        if not model_blob:raise ValueError(f"No LOD0 model is available for {unit_id}")
+        model = parse_sanmodel_bytes(model_blob)
         skeleton_obj = None
-        if include_skeleton and record.get("skeleton_member"):
-            skeleton = parse_sanskeleton_bytes(zf.read(record["skeleton_member"]))
+        skeleton_blob=blob("skeleton_member","skeleton_path") if include_skeleton else None
+        if skeleton_blob:
+            skeleton = parse_sanskeleton_bytes(skeleton_blob)
             skeleton_obj = create_armature_from_skeleton(
                 context, skeleton, name=f"{unit_id}_Rig", swap_yz=settings.swap_yz_axis,
             )
@@ -543,11 +653,11 @@ def import_unit_from_database(context, unit_id, include_skeleton=True, include_t
             blobs = {}
             labels = {}
             for kind, key in (("albedo", "albedo_member"), ("mask", "mask_member"), ("normal", "normal_member")):
-                member = record.get(key)
-                if member:
+                member = record.get(key);path=record.get(key.replace("_member","_path"))
+                if member or path:
                     try:
-                        blobs[kind] = zf.read(member)
-                        labels[kind] = f"{units_pack}!/{member}"
+                        blobs[kind] = blob(key,key.replace("_member","_path"))
+                        labels[kind] = str(path) if loose else f"{units_pack}!/{member}"
                     except Exception as exc:
                         console(f"Could not read {member}: {exc}")
             if blobs:
@@ -556,28 +666,33 @@ def import_unit_from_database(context, unit_id, include_skeleton=True, include_t
                 except Exception as exc:
                     console(f"Could not build texture preview for {unit_id}: {exc}")
 
-        if include_animations and skeleton_obj and record.get("animation_member"):
+        animation_blob=blob("animation_member","animation_path") if include_animations and skeleton_obj else None
+        if animation_blob:
             try:
                 clips, actions = import_sananimation_bytes(
-                    skeleton_obj, zf.read(record["animation_member"]),
-                    source_label=f"{units_pack}!/{record['animation_member']}",
+                    skeleton_obj, animation_blob,
+                    source_label=str(record.get("animation_path")) if loose else f"{units_pack}!/{record['animation_member']}",
                     swap_yz=settings.swap_yz_axis,
                 )
                 if actions:
                     settings.preview_animation = clips[0].name
             except Exception as exc:
                 console(f"Could not import animations for {unit_id}: {exc}")
+    finally:
+        if archive:archive.close()
 
     if skeleton_obj:
         skeleton_obj.location = context.scene.cursor.location
     else:
         obj.location = context.scene.cursor.location
-    settings.unit_id = unit_id
     obj["san_unit_id"] = unit_id
-    obj["san_archive_model_member"] = record["model_member"]
+    obj["san_archive_model_member"] = record.get("model_member","")
+    obj["san_browser_source"] = record.get("source_label",record.get("source_kind","Base Game"))
     if skeleton_obj:
         skeleton_obj["san_unit_id"] = unit_id
         skeleton_obj["san_archive_skeleton_member"] = record.get("skeleton_member", "")
+    from .shield_import import attach_imported_unit
+    attach_imported_unit(context,obj,skeleton_obj,record=record,options=(include_skeleton,include_textures,include_animations))
     bpy.ops.object.select_all(action="DESELECT")
     obj.select_set(True)
     context.view_layer.objects.active = obj
@@ -604,6 +719,38 @@ class SANCTUARY_OT_build_unit_database(Operator):
         return {"FINISHED"}
 
 
+class SANCTUARY_OT_choose_game_folder(Operator):
+    bl_idname = "sanctuary.choose_game_folder"
+    bl_label = "Choose Sanctuary Game Folder"
+    bl_description = "Choose the Sanctuary installation or its engine folder, then open the unit browser"
+
+    directory: StringProperty(subtype="DIR_PATH")
+
+    def invoke(self, context, event):
+        prefs = get_addon_preferences(context)
+        if prefs and prefs.sanctuary_root:
+            self.directory = prefs.sanctuary_root
+        context.window_manager.fileselect_add(self)
+        return {"RUNNING_MODAL"}
+
+    def execute(self, context):
+        prefs = get_addon_preferences(context)
+        if prefs is None:
+            self.report({"ERROR"}, "Toolkit preferences are unavailable")
+            return {"CANCELLED"}
+        engine = resolve_engine_root(self.directory)
+        if engine is None:
+            self.report({"ERROR"}, "Choose the Sanctuary folder or its engine folder")
+            return {"CANCELLED"}
+        prefs.sanctuary_root = str(engine)
+        try:
+            build_database(engine)
+        except Exception as exc:
+            self.report({"ERROR"}, f"Could not index Sanctuary units: {exc}")
+            return {"CANCELLED"}
+        return bpy.ops.sanctuary.open_unit_browser("INVOKE_DEFAULT")
+
+
 class SANCTUARY_OT_import_database_unit(Operator):
     bl_idname = "sanctuary.import_database_unit"
     bl_label = "Import Selected Unit"
@@ -616,7 +763,7 @@ class SANCTUARY_OT_import_database_unit(Operator):
             return {"CANCELLED"}
         try:
             st = context.scene.sanctuary_toolkit
-            import_unit_from_database(
+            imported_obj, _imported_rig = import_unit_from_database(
                 context, unit_id,
                 include_skeleton=st.browser_import_skeleton,
                 include_textures=st.browser_import_textures,
@@ -626,7 +773,10 @@ class SANCTUARY_OT_import_database_unit(Operator):
             console(f"Import failed: {exc}")
             self.report({"ERROR"}, str(exc))
             return {"CANCELLED"}
-        self.report({"INFO"}, f"Imported {unit_id} LOD0")
+        record=_DATABASE_BY_ID.get(unit_id,{})
+        if imported_obj.get('san_shield_import_diagnostics'):
+            self.report({'WARNING'},imported_obj['san_shield_import_diagnostics'])
+        self.report({"INFO"}, f"Imported {record.get('unit_id',unit_id)} LOD0 from {record.get('source_label','database')}")
         return {"FINISHED"}
 
 
@@ -658,6 +808,13 @@ def _resolve_unit_location(unit_id, destination, record, payload):
     engine = Path(payload.get("engine_root", ""))
     units_pack = Path(payload.get("units_pack", ""))
     if destination == "LUA_TEMPLATE":
+        custom=Path(record.get("template_path",""))
+        if record.get('source_kind', 'BASE') != 'BASE':
+            project = Path(record.get('project_root', ''))
+            if record.get('project_root') and custom.is_file() and project.resolve() in custom.resolve().parents:
+                return {"path":custom,"kind":"file","member":""}
+            raise FileNotFoundError('No project-local Lua copy. Create a project copy; the live/game Lua will not be opened.')
+        if custom.is_file():return {"path":custom,"kind":"file","member":""}
         template_dir = engine / "LJ" / "lua" / "common" / "units" / "unitsTemplates" / unit_id
         candidates = [template_dir / f"{unit_id}.lua", template_dir / f"{unit_id}.santp"]
         for candidate in candidates:
@@ -667,6 +824,9 @@ def _resolve_unit_location(unit_id, destination, record, payload):
 
     if destination != "UNIT_FILES":
         raise ValueError(f"Unknown unit location: {destination}")
+    custom_model=Path(record.get("model_path",""))
+    if custom_model.is_file():return {"path":custom_model.parent,"kind":"folder","member":""}
+    units_pack=Path(record.get("units_pack") or units_pack)
     loose = units_pack.parent / "Units" / unit_id / "LOD0"
     expected_names = {f"{unit_id}_lod0.sanmodel"}
     for key in ("model_member", "skeleton_member", "animation_member", "material_member", "albedo_member", "mask_member", "normal_member"):
@@ -707,20 +867,29 @@ class SANCTUARY_OT_open_unit_location(Operator):
         name="Location",
         items=(
             ("UNIT_FILES", "Unit Files (LOD0)", "Open LOD0; ask to extract browsing copies if the folder is missing", "FILE_FOLDER", 0),
-            ("LUA_TEMPLATE", "Lua / Unit Template", "Reveal the unit's Lua/.santp template in the system file browser", "FILE_SCRIPT", 1),
+            ("LUA_TEMPLATE", "Editable Project Lua Copy", "Create a missing project copy if necessary; never reveal the live/game Lua for editing", "FILE_SCRIPT", 1),
         ),
         default="UNIT_FILES",
     )
 
     def execute(self, context):
         load_database()
-        unit_id = self.unit_id or context.scene.sanctuary_toolkit.browser_selected_unit
-        record = _DATABASE_BY_ID.get(unit_id)
+        record_key = self.unit_id or context.scene.sanctuary_toolkit.browser_selected_unit
+        record = _DATABASE_BY_ID.get(record_key)
         payload = get_database_payload()
         if not record or not payload:
             self.report({"ERROR"}, "Unit database metadata is unavailable; rebuild the unit index")
             return {"CANCELLED"}
         try:
+            unit_id=record["unit_id"]
+            if self.destination == 'LUA_TEMPLATE':
+                from .project_blueprints import editable_record_path
+                path = editable_record_path(context, record, payload)
+                _reveal_in_file_browser(path, select_file=True)
+                from .mod_projects import _refresh_browser
+                _refresh_browser(context)
+                self.report({'INFO'}, 'Project Lua: ' + str(path))
+                return {'FINISHED'}
             location = _resolve_unit_location(unit_id, self.destination, record, payload)
             path = location["path"]
             if location["kind"] == "archive":
@@ -855,12 +1024,7 @@ class SANCTUARY_OT_browser_reset_filters(Operator):
     def execute(self, context):
         s = context.scene.sanctuary_toolkit
         s.browser_search = ""
-        for name in (
-            "browser_faction_chosen", "browser_faction_guard", "browser_faction_eda", "browser_faction_other",
-            "browser_tech_commander", "browser_tech1", "browser_tech2", "browser_tech3", "browser_tech4", "browser_tech_other",
-            "browser_domain_land", "browser_domain_air", "browser_domain_navy", "browser_domain_structure", "browser_domain_other",
-        ):
-            setattr(s, name, True)
+        s.browser_source="ALL";s.browser_faction="ALL";s.browser_tech="ALL";s.browser_domain="ALL"
         s.browser_page = 0
         return {"FINISHED"}
 
@@ -880,30 +1044,18 @@ def _draw_browser(layout, context, operator=None):
     header.operator("sanctuary.build_unit_database", text="", icon="FILE_REFRESH")
     header.operator("sanctuary.browser_reset_filters", text="", icon="LOOP_BACK")
 
-    split = layout.split(factor=0.19)
+    split = layout.split(factor=0.22)
     filters = split.column()
     content = split.column()
 
-    fbox = filters.box(); fbox.label(text="FACTIONS")
-    fbox.prop(s, "browser_faction_chosen", text="Chosen")
-    fbox.prop(s, "browser_faction_guard", text="Guard")
-    fbox.prop(s, "browser_faction_eda", text="EDA")
-    fbox.prop(s, "browser_faction_other", text="Other")
-
-    tbox = filters.box(); tbox.label(text="TECH LEVEL")
-    tbox.prop(s, "browser_tech_commander", text="Commander")
-    tbox.prop(s, "browser_tech1", text="T1")
-    tbox.prop(s, "browser_tech2", text="T2")
-    tbox.prop(s, "browser_tech3", text="T3")
-    tbox.prop(s, "browser_tech4", text="T4 / Experimental")
-    tbox.prop(s, "browser_tech_other", text="Other")
-
-    dbox = filters.box(); dbox.label(text="UNIT TYPE")
-    dbox.prop(s, "browser_domain_land", text="Land")
-    dbox.prop(s, "browser_domain_air", text="Air")
-    dbox.prop(s, "browser_domain_navy", text="Navy")
-    dbox.prop(s, "browser_domain_structure", text="Structure")
-    dbox.prop(s, "browser_domain_other", text="Other")
+    for title,prop in (("SOURCE","browser_source"),("FACTIONS","browser_faction"),
+                       ("TECH LEVEL","browser_tech"),("UNIT TYPE","browser_domain")):
+        fbox=filters.box();fbox.label(text=title)
+        for item in s.bl_rna.properties[prop].enum_items:
+            fbox.prop_enum(s, prop, item.identifier, text=item.name)
+        if prop == "browser_source":
+            fbox.separator()
+            fbox.prop(s, "browser_show_live_mods")
 
     ibox = filters.box(); ibox.label(text="IMPORT")
     ibox.prop(s, "browser_import_skeleton")
@@ -916,12 +1068,15 @@ def _draw_browser(layout, context, operator=None):
         ibox.label(text=selected["unit_id"].upper())
         ibox.label(text=f"{selected.get('faction','')} • {selected.get('tech_level','')}")
         ibox.operator("sanctuary.import_database_unit", text="Import Selected", icon="IMPORT")
+        if selected.get('template_path'):
+            use = ibox.operator('sanctuary.studio_record_lua', text='Use Selected Lua in Studio', icon='TEXT')
+            use.record_key = selected.get('record_key', selected['unit_id'])
     else:
         ibox.label(text="Select a unit card.", icon="INFO")
     filters.label(text="Double-click a unit name to import.", icon="MOUSE_LMB")
 
     records = filtered_units(s)
-    page_size = max(8, int(s.browser_page_size))
+    page_size = max(8, min(16, int(s.browser_page_size)))
     pages = max(1, (len(records) + page_size - 1) // page_size)
     if s.browser_page >= pages:
         s.browser_page = pages - 1
@@ -954,16 +1109,25 @@ def _draw_browser(layout, context, operator=None):
         op = name_row.operator(
             "sanctuary.browser_click",
             text=record.get("display_name") or record["unit_id"],
-            depress=s.browser_selected_unit == record["unit_id"],
+            depress=s.browser_selected_unit == record.get("record_key",record["unit_id"]),
         )
-        op.unit_id = record["unit_id"]
+        op.unit_id = record.get("record_key",record["unit_id"])
         location = name_row.operator_menu_enum(
             "sanctuary.open_unit_location", "destination", text="", icon="FILE_FOLDER"
         )
-        location.unit_id = record["unit_id"]
+        location.unit_id = record.get("record_key",record["unit_id"])
         meta = card.row(align=True)
         meta.label(text=record.get("faction", ""))
         meta.label(text=record.get("domain", "").title())
+        card.label(text=record.get("source_label","Base Game"),icon="PACKAGE")
+        if record.get('blueprint_missing'):
+            card.label(text='Project Lua missing', icon='ERROR')
+            repair = card.operator('sanctuary.open_unit_location', text='Create / Open Project Lua', icon='FILE_SCRIPT')
+            repair.unit_id = record.get('record_key', record['unit_id'])
+            repair.destination = 'LUA_TEMPLATE'
+        if record.get("template_path"):
+            use = card.operator('sanctuary.studio_record_lua', text='Use Lua in Studio', icon='TEXT')
+            use.record_key = record.get('record_key', record['unit_id'])
 
 
 
@@ -981,7 +1145,7 @@ def _browser_operator_search_update(self, context):
 
 class SANCTUARY_OT_open_unit_browser(Operator):
     bl_idname = "sanctuary.open_unit_browser"
-    bl_label = "Sanctuary Unit Browser v1.4.7"
+    bl_label = "Sanctuary Unit Browser v1.5.2"
     bl_description = "Open the clean visual Sanctuary unit browser"
 
     search_query: bpy.props.StringProperty(
@@ -994,8 +1158,7 @@ class SANCTUARY_OT_open_unit_browser(Operator):
         prefs = get_addon_preferences(context)
         engine = resolve_engine_root(prefs.sanctuary_root if prefs else "")
         if not engine:
-            self.report({"ERROR"}, "Choose a valid Sanctuary game folder first")
-            return {"CANCELLED"}
+            return bpy.ops.sanctuary.choose_game_folder("INVOKE_DEFAULT")
         try:
             # Use an operator-owned field for the modal dialog so what is typed
             # is exactly what the same dialog uses to draw/filter its cards.
@@ -1017,6 +1180,7 @@ class SANCTUARY_OT_open_unit_browser(Operator):
 
 
 CLASSES = (
+    SANCTUARY_OT_choose_game_folder,
     SANCTUARY_OT_build_unit_database,
     SANCTUARY_OT_import_database_unit,
     SANCTUARY_OT_browser_click,

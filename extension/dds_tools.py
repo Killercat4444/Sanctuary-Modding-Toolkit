@@ -187,8 +187,9 @@ def _downsample_2x(img, kind):
     avg_linear = linear_rgb.mean(axis=(2, 3))
     rgb = _linear_to_srgb(avg_linear)
     if kind == "albedo":
-        # Team selector: nearest preserves hard selector masks.
-        alpha = blocks[:, :, 0, 0, 3:4].copy()
+        # The selector is numeric coverage. Area averaging retains a thin mark
+        # regardless of its phase within a 2x2 footprint.
+        alpha = np.clip(np.rint(blocks[..., 3].astype(np.float32).mean(axis=(2, 3))), 0, 255).astype(np.uint8)[..., None]
     else:  # mask
         alpha = np.clip(np.rint(blocks[..., 3].astype(np.float32).mean(axis=(2, 3))), 0, 255).astype(np.uint8)[..., None]
     return np.concatenate((rgb, alpha), axis=2)
@@ -316,7 +317,27 @@ def _pillow_lanczos_resize_rgba(rgba, width, height):
     )
 
 
-def _load_png_rgba(path, target_size):
+def _area_resize_channel(channel, width, height):
+    """Positive area weights for numeric selectors: no Lanczos ringing halo."""
+    value = np.asarray(channel, dtype=np.float32)
+    for axis, output in ((0, int(height)), (1, int(width))):
+        source = np.moveaxis(value, axis, 0)
+        length = source.shape[0]
+        if length == output:
+            continue
+        resized = np.empty((output,) + source.shape[1:], dtype=np.float32)
+        scale = length / output
+        for index in range(output):
+            left, right = index * scale, (index + 1) * scale
+            start, stop = int(np.floor(left)), min(length, int(np.ceil(right)))
+            positions = np.arange(start, stop, dtype=np.float64)
+            weights = (np.minimum(positions + 1, right) - np.maximum(positions, left)) / scale
+            resized[index] = np.einsum('i,i...->...', weights, source[start:stop], optimize=False)
+        value = np.moveaxis(resized, 0, axis)
+    return np.clip(np.rint(value), 0, 255).astype(np.uint8)
+
+
+def _load_png_rgba(path, target_size, numeric_channels=()):
     path = str(Path(bpy.path.abspath(path)).expanduser())
     if not Path(path).is_file():
         raise FileNotFoundError(path)
@@ -342,20 +363,35 @@ def _load_png_rgba(path, target_size):
         # same visible orientation as the source PNG file.
         rgba = np.flipud(rgba).copy()
         if (source_width, source_height) != (target_size, target_size):
+            source_rgba = rgba
             rgba = _pillow_lanczos_resize_rgba(rgba, target_size, target_size)
+            for channel in numeric_channels:
+                rgba[..., channel] = _area_resize_channel(source_rgba[..., channel], target_size, target_size)
         return rgba, has_alpha
     finally:
         bpy.data.images.remove(img)
 
 
 def prepare_texture_rgba(path, kind, settings):
-    rgba, has_alpha = _load_png_rgba(path, int(settings.texture_size))
+    # Faction alpha is data, not image opacity. Preserve the existing RGB filter.
+    rgba, has_alpha = _load_png_rgba(path, int(settings.texture_size),
+                                    numeric_channels=(3,) if kind == "albedo" else ())
     if kind == "albedo":
         mode = settings.albedo_alpha_mode
         if mode == "ZERO":
             rgba[..., 3] = 0
         elif mode == "OPAQUE":
             rgba[..., 3] = 255
+        elif mode == "TEAM_MASK":
+            mask_path=Path(bpy.path.abspath(settings.texture_team_mask_png)).expanduser()
+            if not mask_path.is_file():
+                raise FileNotFoundError("Separate Team Mask is selected, but no readable Team Mask PNG was provided")
+            selector,_=_load_png_rgba(str(mask_path),int(settings.texture_size),
+                                     numeric_channels=(0, 1, 2, 3))
+            # Accept grayscale or painted RGB masks; luminance is predictable
+            # and avoids treating an incidental PNG alpha channel as selection.
+            rgb=selector[...,:3].astype(np.float32)
+            rgba[...,3]=np.clip(np.rint(rgb[...,0]*.2126+rgb[...,1]*.7152+rgb[...,2]*.0722),0,255).astype(np.uint8)
         elif not has_alpha:
             # RGB PNGs must not accidentally make the whole unit team colored.
             rgba[..., 3] = 0
@@ -367,7 +403,9 @@ def prepare_texture_rgba(path, kind, settings):
 
     if kind == "mask":
         if settings.mask_input_mode == "AO_ONLY":
-            gray = rgba[..., 0].copy()
+            gray = rgba[..., 0].astype(np.float32)
+            strength = float(getattr(settings, "mask_ao_strength", 1.0))
+            gray = np.clip(np.rint(255.0 - (255.0 - gray) * strength), 0, 255).astype(np.uint8)
             out = np.zeros_like(rgba)
             out[..., 1] = gray
             out[..., 3] = int(round(float(settings.mask_default_smoothness) * 255.0))
@@ -426,51 +464,125 @@ def _validate_top_dxt5(path, expected_size=None):
 
 
 def texture_output_names(output_dir, unit_id, engine_root=None):
-    """Match the actual material references instead of guessing _albedo_team.
+    """Return the stable unit-local names written by the texture converter.
 
-    A material in the export directory is authoritative. Otherwise use the
-    selected installation's packed material. New units default to _Albedo.dds.
-    Only unit-local references can be written into this LOD0 export directory.
+    These names deliberately do not inherit legacy stock suffixes such as
+    ``_albedo_team`` or ``_normal_alpha``.  The converter also refreshes the
+    unit's sanmaterial to point at these names, so every later conversion
+    replaces the same three files deterministically.
     """
     if not re.fullmatch(r"[A-Za-z0-9_-]+", str(unit_id)):
         raise ValueError("Texture export requires a safe unit name, such as ucl1501")
     names = {"albedo": f"{unit_id}_lod0_Albedo.dds", "mask": f"{unit_id}_lod0_mask.dds", "normal": f"{unit_id}_lod0_normal.dds"}
-    material = None
-    source = "default unit filenames"
-    local_path = Path(output_dir) / f"{unit_id}_lod0.sanmaterial"
-    if local_path.is_file():
-        material = json.loads(local_path.read_text(encoding="utf-8-sig"))
-        source = str(local_path)
+    return names, "canonical unit filenames"
+
+
+def _default_material_bounds():
+    obj = getattr(bpy.context, "active_object", None)
+    if obj is not None and getattr(obj, "type", None) == "MESH":
+        values = [max(abs(float(v)), 0.0001) for v in obj.dimensions]
+        return {"x": values[0], "y": values[1], "z": values[2], "w": 0.0}
+    return {"x": 1.0, "y": 1.0, "z": 1.0, "w": 0.0}
+
+
+def _default_unit_material(unit_id):
+    return {
+        "name": f"{unit_id}_lod0",
+        "shader": "RTS/Unit",
+        "renderQueue": 2450,
+        "keywords": ["_ALPHATEST_ON", "_DISABLE_DECALS", "_DISABLE_SSR_TRANSPARENT"],
+        "textures": [],
+        "colors": [
+            {"key": "_TeamColor", "value": {"r": 0.8, "g": 0.007843138, "b": 0.0, "a": 1.0}},
+            {"key": "_EmissionColor", "value": {"r": 1.0, "g": 1.0, "b": 1.0, "a": 1.0}},
+        ],
+        "vectors": [
+            {"key": "_BoundsSize", "value": _default_material_bounds()},
+            {"key": "_DoubleSidedConstants", "value": {"x": 1.0, "y": 1.0, "z": -1.0, "w": 0.0}},
+        ],
+        "floats": [
+            {"key": "_EmissionIntensity", "value": 30000.0},
+            {"key": "AlbedoAmbient", "value": 1.0},
+            {"key": "_Clip", "value": 0.02},
+            {"key": "_MetallicAdjustmentBoost", "value": 1.139},
+            {"key": "_TeamColorIntensity", "value": 1.4},
+            {"key": "_UseShadowThreshold", "value": 0.0},
+            {"key": "_DoubleSidedNormalMode", "value": 1.0},
+            {"key": "_ZTestGBuffer", "value": 3.0},
+        ],
+    }
+
+
+def _read_game_material(unit_id, engine_root=None):
+    root = resolve_engine_root(engine_root) if engine_root else None
+    if root is None:
+        prefs = get_addon_preferences()
+        root = resolve_engine_root(prefs.sanctuary_root if prefs else "")
+    if root is None:
+        return None, "built-in RTS/Unit template"
+    gamedata = root / "Sanctuary_Data" / "Gamedata"
+    relative = f"Units/{unit_id}/LOD0/{unit_id}_lod0.sanmaterial"
+    loose = gamedata / Path(relative)
+    if loose.is_file():
+        return json.loads(loose.read_text(encoding="utf-8-sig")), str(loose)
+    pack = gamedata / "Units.sanpack"
+    if pack.is_file():
+        with zipfile.ZipFile(pack, "r") as archive:
+            members = {name.replace("\\", "/").lower(): name for name in archive.namelist()}
+            member = members.get(relative.lower())
+            if member:
+                return json.loads(archive.read(member).decode("utf-8-sig")), f"{pack}!/{member}"
+    return None, "built-in RTS/Unit template"
+
+
+def write_unit_material(output_dir, unit_id, names=None, engine_root=None):
+    """Create or refresh a complete unit material for converted textures.
+
+    An existing project material remains the authoritative template.  For a
+    replacement unit, the stock loose/packed material is cloned so unit-specific
+    shader tuning is retained.  Only the unit name and the three converted
+    texture references are rewritten.
+    """
+    names = names or texture_output_names(output_dir, unit_id)[0]
+    destination = Path(output_dir) / f"{unit_id}_lod0.sanmaterial"
+    if destination.is_file():
+        material = json.loads(destination.read_text(encoding="utf-8-sig"))
+        source = str(destination)
     else:
-        if engine_root is None:
-            prefs = get_addon_preferences()
-            engine_root = resolve_engine_root(prefs.sanctuary_root if prefs else "")
-        if engine_root:
-            pack = Path(engine_root) / "Sanctuary_Data/Gamedata/Units.sanpack"
-            if pack.is_file():
-                with zipfile.ZipFile(pack) as archive:
-                    wanted = f"units/{unit_id}/lod0/{unit_id}_lod0.sanmaterial".lower()
-                    member = next((name for name in archive.namelist() if name.lower() == wanted), None)
-                    if member:
-                        material = json.loads(archive.read(member).decode("utf-8-sig"))
-                        source = f"{pack} > {member}"
-    if material is not None:
-        keys = {"_MainTex": "albedo", "_MaskMap": "mask", "_NormalMap": "normal"}
-        prefix = f"units/{unit_id}/lod0/".lower()
-        for texture in material.get("textures", []):
-            kind = keys.get(texture.get("key"))
-            if not kind:
-                continue
-            ref = str(texture.get("path", "")).replace("\\", "/")
-            parts = ref.split("/")
-            filename = parts[-1]
-            unit_local = len(parts) == 1 or (len(parts) == 4 and ref.lower().startswith(prefix))
-            if not unit_local or not re.fullmatch(r"[A-Za-z0-9_. -]+\.dds", filename, re.IGNORECASE) or filename.startswith("."):
-                raise ValueError(f"Material references a shared/unsupported texture path: {ref!r}. Use a unit-local material before converting.")
-            names[kind] = filename
-        if len({name.casefold() for name in names.values()}) != len(names):
-            raise ValueError("The material reuses one DDS filename for multiple texture slots")
-    return names, source
+        material, source = _read_game_material(unit_id, engine_root=engine_root)
+        if material is None:
+            material = _default_unit_material(unit_id)
+    if not isinstance(material, dict):
+        raise ValueError(f"Material template is not a JSON object: {source}")
+
+    material["name"] = f"{unit_id}_lod0"
+    material.setdefault("shader", "RTS/Unit")
+    material.setdefault("renderQueue", 2450)
+    material.setdefault("keywords", ["_ALPHATEST_ON", "_DISABLE_DECALS", "_DISABLE_SSR_TRANSPARENT"])
+    for collection in ("textures", "colors", "vectors", "floats"):
+        if not isinstance(material.get(collection), list):
+            material[collection] = []
+
+    refs = {
+        "_MainTex": (names["albedo"], False),
+        "_NormalMap": (names["normal"], True),
+        "_MaskMap": (names["mask"], False),
+    }
+    texture_rows = material["textures"]
+    by_key = {row.get("key"): row for row in texture_rows if isinstance(row, dict)}
+    for key, (filename, linear) in refs.items():
+        row = by_key.get(key)
+        if row is None:
+            row = {"key": key}
+            texture_rows.append(row)
+        row["path"] = f"Units/{unit_id}/LOD0/{filename}"
+        row["linear"] = linear
+        row.setdefault("tilingOffset", {"x": 1.0, "y": 1.0, "z": 0.0, "w": 0.0})
+
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    destination.write_text(json.dumps(material, indent=2) + "\n", encoding="utf-8", newline="\n")
+    console(f"Wrote {destination.name} from {source}; texture references use canonical local DDS names")
+    return destination, source
 
 
 def convert_texture_set(settings, output_dir, unit_id):
@@ -519,6 +631,11 @@ def convert_texture_set(settings, output_dir, unit_id):
         outputs[kind] = (dest, stats)
         stats["material_source"] = material_source
         console(f"Wrote {dest.name}: {stats}")
+    if outputs:
+        material_path, template_source = write_unit_material(output_dir, unit_id, names=names)
+        for _path, stats in outputs.values():
+            stats["material_path"] = str(material_path)
+            stats["material_template_source"] = template_source
     return outputs
 
 # -----------------------------------------------------------------------------

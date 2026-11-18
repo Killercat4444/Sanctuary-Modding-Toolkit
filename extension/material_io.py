@@ -61,9 +61,9 @@ def _write_preview_png(path, rgba):
 
     png = b"\x89PNG\r\n\x1a\n"
     png += chunk(b"IHDR", struct.pack(">IIBBBBB", w, h, 8, 6, 0, 0, 0))
-    # Level 3 is considerably faster for large 2K/4K preview textures while
+    # Level 1 is considerably faster for large 2K/4K preview textures while
     # remaining lossless. These are cache files only, not game assets.
-    png += chunk(b"IDAT", zlib.compress(raw, 3))
+    png += chunk(b"IDAT", zlib.compress(raw, 1))
     png += chunk(b"IEND", b"")
     Path(path).write_bytes(png)
 
@@ -104,10 +104,8 @@ def _blender_image_from_rgba(name, rgba, colorspace="sRGB"):
         img.update()
     except Exception:
         pass
-    try:
-        img.pack()
-    except Exception:
-        pass
+    # Keep previews file-backed. Packing every generated 2K/4K PNG duplicates
+    # the texture inside the .blend and substantially delays browser imports.
     return img
 
 def _normal_preview_rgba(rgba):
@@ -211,17 +209,12 @@ def apply_sanctuary_material(obj, unit_id, texture_blobs, source_labels=None):
     albedo_node = None
     if "albedo" in decoded:
         raw = decoded["albedo"]
-        # Human-readable RGB preview ignores team-selector alpha.
-        preview = _blender_image_from_rgba(f"{unit_id}_albedo_preview", _opaque_copy(raw), "sRGB")
-        preview["san_source"] = str(source_labels.get("albedo", ""))
-        images["albedo"] = preview
-        # Preserve original alpha for future shader/team-color inspection.
+        # One image contains both the visible RGB and the team selector alpha.
+        # The old importer generated three full-resolution copies here.
         data_img = _blender_image_from_rgba(f"{unit_id}_albedo_data", raw, "sRGB")
         data_img["san_source"] = str(source_labels.get("albedo", ""))
+        images["albedo"] = data_img
         images["albedo_data"] = data_img
-        team = _blender_image_from_rgba(f"{unit_id}_team_selector_preview", _grayscale_rgba(raw[..., 3]), "Non-Color")
-        team["san_source"] = str(source_labels.get("albedo", ""))
-        images["team_selector"] = team
 
         tex = nodes.new("ShaderNodeTexImage")
         tex.image = data_img
@@ -229,29 +222,27 @@ def apply_sanctuary_material(obj, unit_id, texture_blobs, source_labels=None):
         if uv_node is not None:
             links.new(uv_node.outputs["UV"], tex.inputs["Vector"])
         tex.location = (-760, 220)
-        albedo_node = tex
+        team_color=nodes.new("ShaderNodeRGB");team_color.label="SMT Team Color";team_color.name="SMT Team Color"
+        try:team_color.outputs[0].default_value=bpy.context.scene.sanctuary_toolkit.preview_team_color
+        except Exception:team_color.outputs[0].default_value=(1.0,.18,.02,1.0)
+        team_color.location=(-520,360)
+        team_mix=nodes.new("ShaderNodeMixRGB");team_mix.label="Faction Color Preview";team_mix.blend_type="MIX";team_mix.location=(-250,240)
+        links.new(tex.outputs["Alpha"],team_mix.inputs[0]);links.new(tex.outputs["Color"],team_mix.inputs[1]);links.new(team_color.outputs[0],team_mix.inputs[2])
+        albedo_node = team_mix
         base = _input(bsdf, "Base Color")
         if base:
-            links.new(tex.outputs["Color"], base)
+            links.new(team_mix.outputs["Color"], base)
 
     if "mask" in decoded:
         raw = decoded["mask"]
-        preview = _blender_image_from_rgba(f"{unit_id}_mask_preview", _opaque_copy(raw), "sRGB")
-        preview["san_source"] = str(source_labels.get("mask", ""))
-        images["mask"] = preview
         # Packed metallic/AO/emission/smoothness channels are numeric data.
-        # sRGB decoding darkens AO and changes metallic values in the preview.
-        # This does not change the DDS bytes or the game's material.
+        # Keep one channel-packed image and expose its channels through nodes;
+        # generating five additional 4K preview images made imports needlessly
+        # slow and memory-heavy.
         data_img = _blender_image_from_rgba(f"{unit_id}_mask_data", raw, "Non-Color")
         data_img["san_source"] = str(source_labels.get("mask", ""))
+        images["mask"] = data_img
         images["mask_data"] = data_img
-        for key, ch, cs in (
-            ("metallic", 0, "Non-Color"), ("ao", 1, "Non-Color"),
-            ("emission", 2, "Non-Color"), ("smoothness", 3, "Non-Color"),
-        ):
-            img = _blender_image_from_rgba(f"{unit_id}_{key}_preview", _grayscale_rgba(raw[..., ch]), cs)
-            img["san_source"] = str(source_labels.get("mask", ""))
-            images[key] = img
 
         tex = nodes.new("ShaderNodeTexImage")
         tex.image = data_img

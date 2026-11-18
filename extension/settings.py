@@ -1,3 +1,6 @@
+import json
+from pathlib import Path
+
 import bpy
 from bpy.types import AddonPreferences, PropertyGroup
 from bpy.props import (
@@ -5,6 +8,7 @@ from bpy.props import (
     CollectionProperty,
     EnumProperty,
     FloatProperty,
+    FloatVectorProperty,
     IntProperty,
     PointerProperty,
     StringProperty,
@@ -12,6 +16,41 @@ from bpy.props import (
 
 from .utils import ADDON_ID
 from .texture_help import texture_input_description
+from .icon_camera import DEFAULT_ROTATION
+from . import shared_project
+
+
+def _mod_export_version_project(settings):
+    raw = shared_project.get(settings)
+    if not raw:
+        return ""
+    return str(Path(bpy.path.abspath(raw)).expanduser().resolve())
+
+
+def _mod_export_version_get(settings):
+    project = _mod_export_version_project(settings)
+    if settings.get("_mod_export_version_project", "") == project:
+        stored = str(settings.get("_mod_export_version", "")).strip()
+        if stored:
+            return stored
+    if project:
+        root = Path(project)
+        for manifest in (
+            root / "Mod Manager Compatibility" / "mod.json",
+            root / "smt_project.json",
+        ):
+            try:
+                value = json.loads(manifest.read_text(encoding="utf-8")).get("version", "")
+                if value:
+                    return str(value)
+            except (OSError, ValueError, TypeError):
+                continue
+    return "0.1"
+
+
+def _mod_export_version_set(settings, value):
+    settings["_mod_export_version"] = str(value).strip()
+    settings["_mod_export_version_project"] = _mod_export_version_project(settings)
 
 
 
@@ -128,8 +167,26 @@ def _browser_filter_update(self, context):
         pass
 
 
+def _lua_editor_mode_update(self, context):
+    if self.lua_editor_mode != "SOURCE" or not self.lua_source_path:
+        return
+    try:
+        from .lua_editor import refresh_source_lines
+        refresh_source_lines(self)
+    except Exception:
+        # An unfinished hand-edited Lua draft may temporarily be invalid. Keep
+        # the draft intact and let Apply/Save report the precise parser error.
+        pass
+
+
 class SanctuaryAddonPreferences(AddonPreferences):
     bl_idname = ADDON_ID
+
+    icon_camera_rotation: FloatVectorProperty(
+        name='Default Icon Camera Rotation', size=3, subtype='EULER',
+        default=DEFAULT_ROTATION,
+        description='Global camera Euler XYZ angle for new icon scenes; save it on the Icon tab to remember across Blender restarts',
+    )
 
     sanctuary_root: StringProperty(
         name="Sanctuary Game Folder",
@@ -144,12 +201,25 @@ class SanctuaryAddonPreferences(AddonPreferences):
         min=5,
         max=100,
     )
+    mod_library_root: StringProperty(
+        name="Mod Project Library",
+        description="Folder containing one editable project folder per Sanctuary mod",
+        subtype="DIR_PATH", default="~/Documents/Sanctuary Mod Projects/",
+    )
+    mods_root: StringProperty(
+        name="Live Sanctuary Mods Folder",
+        description="Live Mods folder containing Units.sanpack, Lua, and optional UI.sanpack",
+        subtype="DIR_PATH",
+        default="~/Documents/My Games/Enhearten Media/Sanctuary/Mods/",
+    )
 
     def draw(self, context):
         layout = self.layout
         layout.label(text="Sanctuary Installation")
         layout.prop(self, "sanctuary_root")
-        layout.label(text="The toolkit reads base .sanpack files but does not modify them.", icon="INFO")
+        layout.prop(self, "mod_library_root")
+        layout.prop(self, "mods_root")
+        layout.label(text="Base game packs are read-only. Deployment writes only to the configured Mods folder.", icon="INFO")
 
 
 class SanctuaryAnimationItem(PropertyGroup):
@@ -176,6 +246,12 @@ class SanctuaryAnimationItem(PropertyGroup):
         default=True,
     )
     clip_name: StringProperty(name="Clip Name", default="")
+    behaviour_role: EnumProperty(name="Behaviour", default='AUTO', items=[
+        ('AUTO', 'Auto by name', 'Find walk, build or rest anywhere in the clip name'),
+        ('walk', 'Walking', 'Use this clip for walking; overrides automatic matching'),
+        ('build', 'Building', 'Use this clip for building; overrides automatic matching'),
+        ('rest', 'Rest / idle', 'Use this clip when idle; overrides automatic matching'),
+        ('NONE', 'Do not auto-assign', 'Export this clip without adding a behaviour assignment')])
     loop: BoolProperty(
         name="Loop",
         description="Close the clip by repeating its first sampled pose at the clip duration",
@@ -198,11 +274,24 @@ class SanctuaryAnimationItem(PropertyGroup):
     )
 
 
+def _lua_source_line_update(self, context):
+    self.changed = self.text != self.original
+
+
+class SanctuaryLuaSourceLine(PropertyGroup):
+    """One editable line in the Lua editor's VS Code-style source view."""
+
+    line_number: IntProperty(default=1)
+    text: StringProperty(name="Lua Source", update=_lua_source_line_update)
+    original: StringProperty(options={"HIDDEN"})
+    changed: BoolProperty(default=False, options={"HIDDEN"})
+
+
 class SanctuarySettings(PropertyGroup):
     unit_id: StringProperty(
         name="Unit ID",
         description="Sanctuary unit id, for example ucl1501",
-        default="ucl1501",
+        default="",
     )
     output_dir: StringProperty(
         name="Output Folder",
@@ -271,14 +360,32 @@ class SanctuarySettings(PropertyGroup):
         min=0.0,
         max=1.0,
     )
+    mask_ao_strength: FloatProperty(
+        name="AO Strength",
+        description="Blend an AO-only input toward unoccluded white. 1 keeps the bake unchanged; lower values reduce excessive darkening",
+        default=1.0,
+        min=0.0,
+        max=1.0,
+        subtype="FACTOR",
+    )
     albedo_alpha_mode: EnumProperty(
         name="Albedo Alpha",
         items=(
             ("PRESERVE", "Preserve PNG Alpha", "Preserve alpha when present; RGB PNGs receive alpha 0"),
             ("ZERO", "No Team Color (0)", "Force albedo alpha to zero"),
             ("OPAQUE", "Full Team Color (255)", "Force albedo alpha to 255"),
+            ("TEAM_MASK", "Separate Team Mask", "Use the grayscale Team Mask PNG as albedo alpha"),
         ),
         default="ZERO",
+    )
+    texture_team_mask_png: StringProperty(
+        name="Team Mask PNG",
+        description="Grayscale selector combined into albedo alpha; white receives faction color",
+        subtype="FILE_PATH", default="",
+    )
+    preview_team_color: FloatVectorProperty(
+        name="Preview Faction Color", subtype="COLOR", size=4,
+        default=(1.0, 0.18, 0.02, 1.0), min=0.0, max=1.0,
     )
 
     browser_search: StringProperty(name="Search", default="", update=_browser_filter_update)
@@ -286,6 +393,12 @@ class SanctuarySettings(PropertyGroup):
     browser_import_skeleton: BoolProperty(name="Import Skeleton", default=True)
     browser_import_textures: BoolProperty(name="Import Textures", default=True)
     browser_import_animations: BoolProperty(name="Import Animations", default=True)
+    browser_show_live_mods: BoolProperty(
+        name="Show Live Mods",
+        description="Include units deployed in the Documents-side Mods folder. Disable this when the same units already exist in the project library",
+        default=False,
+        update=_browser_filter_update,
+    )
 
     import_companion_textures: BoolProperty(
         name="Auto-load Companion Textures",
@@ -303,7 +416,85 @@ class SanctuarySettings(PropertyGroup):
         items=_preview_action_items,
     )
     browser_page: IntProperty(name="Browser Page", default=0, min=0)
-    browser_page_size: IntProperty(name="Units Per Page", default=24, min=8, max=48)
+    browser_page_size: IntProperty(name="Units Per Page", default=12, min=8, max=16)
+
+    browser_source: EnumProperty(name="SOURCE", items=(
+        ("ALL", "All", "Show base-game and mod units"),
+        ("BASE", "Base Game", "Show base-game units"),
+        ("MOD_UNTAGGED", "Modded / Untagged", "Show loose replacement mods without a faction tag"),
+        ("MOD_TAGGED", "Faction Mods", "Show units belonging to tagged custom factions"),
+    ), default="ALL", update=_browser_filter_update)
+    browser_faction: EnumProperty(name="FACTION", items=(
+        ("ALL", "All", "Show every faction"), ("CHOSEN", "Chosen", "Chosen only"),
+        ("GUARD", "Guard", "Guard only"), ("EDA", "EDA", "EDA only"),
+        ("CUSTOM", "Custom / Tagged", "Custom faction tags only"), ("OTHER", "Other", "Unclassified only"),
+    ), default="ALL", update=_browser_filter_update)
+    browser_tech: EnumProperty(name="TECH LEVEL", items=(
+        ("ALL", "All", "Show every tech level"), ("COMMANDER", "Commander", "Commander only"),
+        ("T1", "T1", "Tech 1 only"), ("T2", "T2", "Tech 2 only"),
+        ("T3", "T3", "Tech 3 only"), ("T4", "T4 / Experimental", "Experimental only"),
+        ("OTHER", "Other", "Unclassified tech only"),
+    ), default="ALL", update=_browser_filter_update)
+    browser_domain: EnumProperty(name="UNIT TYPE", items=(
+        ("ALL", "All", "Show every unit type"), ("LAND", "Land", "Land only"),
+        ("AIR", "Air", "Air only"), ("NAVY", "Navy", "Naval only"),
+        ("STRUCTURE", "Structure", "Structures only"), ("OTHER", "Other", "Unclassified only"),
+    ), default="ALL", update=_browser_filter_update)
+
+    mod_project_name: StringProperty(name="Project Name", default="My Sanctuary Mod")
+    mod_active_path: StringProperty(name="Active Project (all files)", subtype="DIR_PATH",
+        description="Shared export project; selecting a valid folder remembers it across .blend files and restarts",
+        get=shared_project.get, set=shared_project.set)
+    mod_faction_name: StringProperty(name="Faction Name", default="")
+    mod_faction_tag: StringProperty(name="Faction Tag", default="")
+    mod_tagged: BoolProperty(name="Tagged Faction Mod", default=True)
+    mod_auto_deploy: BoolProperty(name="Auto-deploy Project Changes", default=False)
+    mod_archive_path: StringProperty(name="SMT Package", subtype="FILE_PATH", default="")
+    mod_export_version: StringProperty(
+        name="Version",
+        description="Release version used in exported ZIP names and the Mod Manager manifest",
+        get=_mod_export_version_get,
+        set=_mod_export_version_set,
+    )
+    mod_unit_icon_png: StringProperty(name="Unit Icon PNG", subtype="FILE_PATH", default="")
+
+    lua_donor_unit: StringProperty(name="Template Unit ID", default="ucl1501")
+    lua_display_name: StringProperty(name="Display Name", default="Tier 1: Engineer")
+    lua_faction_prefix: StringProperty(name="Faction Prefix", maxlen=1)
+    lua_serial: StringProperty(name="Legacy Serial", default="1100", maxlen=4, options={'HIDDEN'})
+    lua_sequence: StringProperty(name="Three Digits", default="100", maxlen=3)
+    lua_use_project_id: BoolProperty(name="Use Unit ID from Project", default=False)
+    lua_source_path: StringProperty(name="Editing File", subtype="FILE_PATH")
+    lua_project_path: StringProperty(options={'HIDDEN'})
+    lua_source_text: StringProperty(options={'HIDDEN'})
+    lua_manual_text: StringProperty(options={'HIDDEN'})
+    lua_baseline: StringProperty(options={'HIDDEN'})
+    lua_drafts: StringProperty(default="{}", options={'HIDDEN'})
+    lua_known_tags: StringProperty(default="", options={'HIDDEN'})
+    lua_faction_tag: StringProperty(name="Faction Tag", default="")
+    lua_editor_mode: EnumProperty(name="Editor View", items=(
+        ("VISUAL", "Visual", "Edit common fields and tags"),
+        ("SOURCE", "Lua Source", "Edit the complete Lua source with changed-line highlighting"),
+    ), default="VISUAL", update=_lua_editor_mode_update)
+    lua_source_lines: CollectionProperty(type=SanctuaryLuaSourceLine)
+    lua_source_line_index: IntProperty(default=0)
+    lua_reset_armed_line: IntProperty(default=-1, options={'HIDDEN'})
+    lua_reset_armed_time: FloatProperty(default=0.0, options={'HIDDEN'})
+    mod_import_companions: BoolProperty(name="Include Sibling Lua / UI", default=True,
+        description="For a Units.sanpack import, also copy the adjacent Lua folder and UI.sanpack into the project")
+    lua_domain: EnumProperty(name="Unit Family", items=(
+        ("L", "Land Unit", "UDL..."), ("S", "Structure", "UDS..."),
+        ("A", "Air Unit", "UDA..."), ("N", "Naval Unit", "UDN..."),
+    ), default="L")
+    lua_tier: EnumProperty(name="Tier", items=(("1","T1",""),("2","T2",""),("3","T3",""),("4","Experimental","")), default="1")
+    lua_unit_type: StringProperty(name="Unit Type Name", default="CustomUnit")
+    lua_buildable_by: StringProperty(name="Built By Tags", default="BUILDABLE_BY_T1_FACTORY")
+    lua_extra_tags: StringProperty(name="Extra Tags", default="LAND, MOBILE, ENGINEER")
+    lua_target_layers: StringProperty(name="Weapon Target Layers", default="Land, WaterSurface")
+    lua_health: IntProperty(name="Health", default=500, min=1)
+    lua_alloy_cost: IntProperty(name="Alloy Cost", default=50, min=0)
+    lua_energy_cost: IntProperty(name="Energy Cost", default=250, min=0)
+    lua_build_time: FloatProperty(name="Build Time", default=120.0, min=0.01)
 
     browser_faction_chosen: BoolProperty(name="Chosen", default=True, update=_browser_filter_update)
     browser_faction_guard: BoolProperty(name="Guard", default=True, update=_browser_filter_update)
@@ -351,6 +542,7 @@ class SanctuarySettings(PropertyGroup):
 CLASSES = (
     SanctuaryAddonPreferences,
     SanctuaryAnimationItem,
+    SanctuaryLuaSourceLine,
     SanctuarySettings,
 )
 

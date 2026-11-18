@@ -103,18 +103,24 @@ def _create_uv_layer(mesh, name, per_vertex_uv, mirror_v=False):
     if len(per_vertex_uv) == 0:
         return
     layer = mesh.uv_layers.new(name=name)
-    for loop in mesh.loops:
-        uv = per_vertex_uv[loop.vertex_index]
-        v = 1.0 - float(uv[1]) if mirror_v else float(uv[1])
-        layer.data[loop.index].uv = (float(uv[0]), v)
+    # RNA assignment per loop dominates import time on large units. Gather the
+    # vertex indices once and upload the complete UV buffer in one operation.
+    vertex_indices = np.empty(len(mesh.loops), dtype=np.int32)
+    mesh.loops.foreach_get("vertex_index", vertex_indices)
+    values = np.asarray(per_vertex_uv, dtype=np.float32)[vertex_indices].copy()
+    if mirror_v:
+        values[:, 1] = 1.0 - values[:, 1]
+    layer.data.foreach_set("uv", values.ravel())
 
 
 def _apply_custom_normals(mesh, normals, swap_yz=True):
     if len(normals) != len(mesh.vertices):
         return
-    values = [san_to_blender_vector(n) if swap_yz else tuple(map(float, n)) for n in normals]
+    values = np.asarray(normals, dtype=np.float32)
+    if swap_yz:
+        values = values[:, (0, 2, 1)]
     try:
-        mesh.normals_split_custom_set_from_vertices(values)
+        mesh.normals_split_custom_set_from_vertices(values.tolist())
     except Exception as exc:
         console(f"Custom normals could not be applied ({exc}); Blender will recalculate them.")
 
@@ -148,14 +154,16 @@ def _generic_armature_from_bindposes(context, model: SanModelData, swap_yz=True)
 
 
 def import_sanmodel(context, model: SanModelData, skeleton_obj=None, swap_yz=True, mirror_uv=False):
-    verts = [san_to_blender_vector(v) if swap_yz else tuple(map(float, v)) for v in model.vertices]
-    faces = [tuple(map(int, tri)) for tri in model.indices]
+    verts = np.asarray(model.vertices, dtype=np.float32)
+    faces = np.asarray(model.indices, dtype=np.int32)
+    if swap_yz:
+        verts = verts[:, (0, 2, 1)]
     if swap_yz:
         # The axis swap reflects handedness. Undo the serialized winding flip
         # just as export does, so front faces agree with the imported normals.
-        faces = [(a, c, b) for a, b, c in faces]
+        faces = faces[:, (0, 2, 1)]
     mesh = bpy.data.meshes.new(model.name + "Mesh")
-    mesh.from_pydata(verts, [], faces)
+    mesh.from_pydata(verts.tolist(), [], faces.tolist())
     mesh.update(calc_edges=True)
 
     obj = bpy.data.objects.new(model.name, mesh)
@@ -173,16 +181,13 @@ def import_sanmodel(context, model: SanModelData, skeleton_obj=None, swap_yz=Tru
     if skeleton_obj is not None and len(model.uv2) == len(model.vertices):
         mapping, ordered = get_bone_id_map(skeleton_obj)
         id_to_name = {bid: name for name, bid in mapping.items()}
-        buckets = {i: [] for i in range(len(ordered))}
-        for vi, uv in enumerate(model.uv2):
-            bid = int(round(float(uv[0])))
-            if bid in buckets:
-                buckets[bid].append(vi)
+        bone_ids = np.rint(np.asarray(model.uv2)[:, 0]).astype(np.int32)
         for bid in range(len(ordered)):
             name = id_to_name.get(bid, f"Bone_{bid}")
             vg = obj.vertex_groups.new(name=name)
-            if buckets[bid]:
-                vg.add(buckets[bid], 1.0, "REPLACE")
+            indices = np.flatnonzero(bone_ids == bid)
+            if len(indices):
+                vg.add(indices.tolist(), 1.0, "REPLACE")
         mod = obj.modifiers.new(name="Armature", type="ARMATURE")
         mod.object = skeleton_obj
         obj.parent = skeleton_obj
@@ -278,6 +283,54 @@ def _prepare_evaluated_mesh(context, obj, armature):
             except Exception:
                 pass
         return obj_eval, mesh, old_pose_position, corner_normals
+    except Exception:
+        if obj_eval is not None:
+            try:
+                obj_eval.to_mesh_clear()
+            except Exception:
+                pass
+        if armature is not None and old_pose_position is not None:
+            armature.data.pose_position = old_pose_position
+            context.view_layer.update()
+        raise
+
+
+def _prepare_corner_export_mesh(context, obj, armature):
+    """Evaluate once and serialize triangle corners without a BMesh edge split.
+
+    Sanctuary stores one normal/UV per vertex, so seams require duplicated
+    vertices.  The older exporter achieved that by physically splitting every
+    evaluated edge with BMesh.  Meshy-derived unit meshes can make that step
+    pathologically slow.  Emitting one output vertex per triangle corner is
+    equivalent for the file format and keeps export time linear.
+    """
+    old_pose_position = None
+    obj_eval = None
+    if armature is not None:
+        old_pose_position = armature.data.pose_position
+        armature.data.pose_position = "REST"
+        context.view_layer.update()
+    try:
+        depsgraph = context.evaluated_depsgraph_get()
+        obj_eval = obj.evaluated_get(depsgraph)
+        mesh = obj_eval.to_mesh()
+        normal_attribute = _store_export_corner_normals(mesh)
+        bm = bmesh.new()
+        try:
+            bm.from_mesh(mesh)
+            bmesh.ops.triangulate(bm, faces=list(bm.faces))
+            bm.to_mesh(mesh)
+        finally:
+            bm.free()
+        _restore_export_corner_normals(mesh, normal_attribute)
+        mesh.calc_loop_triangles()
+        if mesh.uv_layers:
+            uv_name = mesh.uv_layers.get("UV1Map")
+            try:
+                mesh.calc_tangents(uvmap=uv_name.name if uv_name else mesh.uv_layers[0].name)
+            except Exception:
+                pass
+        return obj_eval, mesh, old_pose_position
     except Exception:
         if obj_eval is not None:
             try:
@@ -447,17 +500,77 @@ def _write_float_array(out, arr, components):
 
 def build_sanmodel_bytes(context, obj, armature, model_name, swap_yz=True, mirror_uv=False):
     mapping, ordered = get_bone_id_map(armature) if armature else ({}, [])
-    obj_eval, mesh, old_pose_position, corner_normals = _prepare_evaluated_mesh(context, obj, armature)
+    obj_eval, mesh, old_pose_position = _prepare_corner_export_mesh(context, obj, armature)
     try:
         mesh_to_arm = _mesh_to_armature_matrix(obj, armature)
-        vertices = np.array([_transform_position(v.co, mesh_to_arm, swap_yz) for v in mesh.vertices], dtype="<f4")
-        normals = _extract_per_vertex_normals(mesh, mesh_to_arm, swap_yz, corner_normals)
-        tangents = _extract_per_vertex_tangents(mesh, mesh_to_arm, swap_yz, mirror_uv, normals)
-        uv1 = _extract_uv(mesh, "UV1Map", 0, mirror_uv)
-        uv3 = _extract_uv(mesh, "UV3Map", 1, mirror_uv)
-        uv2, multi_weight, unknown_groups = _extract_bone_ids(obj, mesh, armature, mapping)
-        colors = _extract_colors(obj, mesh)
-        indices = np.array([tri.vertices[:] for tri in mesh.loop_triangles], dtype="<i4")
+        corner_loops = [li for tri in mesh.loop_triangles for li in tri.loops]
+        corner_index = np.asarray(corner_loops, dtype=np.int32)
+        loop_vertex_ids = np.empty(len(mesh.loops), dtype=np.int32)
+        mesh.loops.foreach_get("vertex_index", loop_vertex_ids)
+        source_vertices = loop_vertex_ids[corner_index]
+
+        source_positions = np.empty((len(mesh.vertices), 3), dtype=np.float64)
+        mesh.vertices.foreach_get("co", source_positions.reshape(-1))
+        matrix = np.asarray(mesh_to_arm, dtype=np.float64)
+        source_positions = source_positions @ matrix[:3, :3].T + matrix[:3, 3]
+        vertices = source_positions[source_vertices]
+        if swap_yz:
+            vertices = vertices[:, [0, 2, 1]]
+        vertices = np.asarray(vertices, dtype="<f4")
+
+        all_normals = np.empty((len(mesh.loops), 3), dtype=np.float64)
+        mesh.corner_normals.foreach_get("vector", all_normals.reshape(-1))
+        normal_matrix = np.asarray(mesh_to_arm.to_3x3().inverted_safe().transposed(), dtype=np.float64)
+        normals = all_normals[corner_index] @ normal_matrix.T
+        normal_lengths = np.linalg.norm(normals, axis=1)
+        valid = normal_lengths > 1e-20
+        normals[valid] /= normal_lengths[valid, None]
+        if swap_yz:
+            normals = normals[:, [0, 2, 1]]
+        normals = np.asarray(normals, dtype="<f4")
+
+        tangents = np.zeros((len(corner_loops), 4), dtype=np.float64)
+        if mesh.uv_layers:
+            all_tangents = np.empty((len(mesh.loops), 3), dtype=np.float64)
+            all_signs = np.empty(len(mesh.loops), dtype=np.float64)
+            mesh.loops.foreach_get("tangent", all_tangents.reshape(-1))
+            mesh.loops.foreach_get("bitangent_sign", all_signs)
+            tangent_matrix = np.asarray(mesh_to_arm.to_3x3(), dtype=np.float64)
+            xyz = all_tangents[corner_index] @ tangent_matrix.T
+            xyz_lengths = np.linalg.norm(xyz, axis=1)
+            valid = xyz_lengths > 1e-20
+            xyz[valid] /= xyz_lengths[valid, None]
+            if swap_yz:
+                xyz = xyz[:, [0, 2, 1]]
+            xyz -= normals * np.sum(xyz * normals, axis=1)[:, None]
+            xyz_lengths = np.linalg.norm(xyz, axis=1)
+            valid = xyz_lengths > 1e-20
+            xyz[valid] /= xyz_lengths[valid, None]
+            tangents[:, :3] = xyz
+            signs = all_signs[corner_index]
+            tangents[:, 3] = signs if mirror_uv == swap_yz else -signs
+        tangents = np.asarray(tangents, dtype="<f4")
+
+        def corner_uv(layer_name, fallback_index):
+            layer = mesh.uv_layers.get(layer_name)
+            if layer is None and len(mesh.uv_layers) > fallback_index:
+                layer = mesh.uv_layers[fallback_index]
+            if layer is None:
+                return np.empty((0, 2), dtype="<f4")
+            all_uv = np.empty((len(mesh.loops), 2), dtype=np.float32)
+            layer.data.foreach_get("uv", all_uv.reshape(-1))
+            result = all_uv[corner_index]
+            if mirror_uv:
+                result[:, 1] = 1.0 - result[:, 1]
+            return np.asarray(result, dtype="<f4")
+
+        uv1 = corner_uv("UV1Map", 0)
+        uv3 = corner_uv("UV3Map", 1)
+        source_uv2, multi_weight, unknown_groups = _extract_bone_ids(obj, mesh, armature, mapping)
+        uv2 = source_uv2[source_vertices] if len(source_uv2) else source_uv2
+        source_colors = _extract_colors(obj, mesh)
+        colors = source_colors[source_vertices] if len(source_colors) else source_colors
+        indices = np.arange(len(corner_loops), dtype="<i4").reshape((-1, 3))
         if swap_yz:
             # Y/Z swap reflects handedness, so preserve front faces by swapping
             # the second and third index of every triangle.
@@ -485,6 +598,7 @@ def build_sanmodel_bytes(context, obj, armature, model_name, swap_yz=True, mirro
             "bones": len(bindposes),
             "multi_weight_vertices": multi_weight,
             "unknown_vertex_groups": unknown_groups,
+            "corner_vertex_export": True,
         }
         return bytes(out), stats
     finally:

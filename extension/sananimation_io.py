@@ -2829,7 +2829,7 @@ def _v142_resolve_source_strict(item):
 
 
 def _v142_sample_source_to_manifest(
-    context, source_armature, action, manifest, start, end, fps, loop, swap_yz=True
+    context, source_armature, target_armature, action, manifest, start, end, fps, loop, swap_yz=True
 ):
     if end < start:
         start, end = end, start
@@ -2858,6 +2858,18 @@ def _v142_sample_source_to_manifest(
         )
 
     samples = {t["id"]: [] for t in manifest}
+    # Source clips often live on duplicate authoring rigs whose object transform
+    # carries an intentional unit conversion. PoseBone.matrix is armature-local,
+    # so serializing it directly discarded that scale/rotation and made the
+    # animation larger or reversed relative to the canonical skeleton. Convert
+    # global pose translations/orientations into the target rig's local basis,
+    # ignoring only the objects' staging locations in the Blender scene.
+    source_basis = source_armature.matrix_world.to_3x3()
+    target_basis = target_armature.matrix_world.to_3x3()
+    source_to_target_linear = target_basis.inverted_safe() @ source_basis
+    source_rotation = source_basis.normalized()
+    target_rotation = target_basis.normalized()
+    source_to_target_rotation = target_rotation.inverted_safe() @ source_rotation
     scene = context.scene
     max_roundtrip = 0.0
     max_rebuild = 0.0
@@ -2884,6 +2896,15 @@ def _v142_sample_source_to_manifest(
                 continue
 
             pose_bl = pb.matrix.copy()
+            pose_loc, pose_rot, pose_scale = pose_bl.decompose()
+            mapped_loc = source_to_target_linear @ pose_loc
+            mapped_rot = source_to_target_rotation.to_quaternion() @ pose_rot
+            mapped_rot.normalize()
+            pose_bl = (
+                Matrix.Translation(mapped_loc)
+                @ mapped_rot.to_matrix().to_4x4()
+                @ Matrix.Diagonal((float(pose_scale.x), float(pose_scale.y), float(pose_scale.z), 1.0))
+            )
             # Baked source rigs can have different edit/rest matrices even when
             # their authored poses share the canonical armature coordinate
             # space. Subtracting source rest and applying target rest changes
@@ -3022,7 +3043,7 @@ def build_sananimation_bytes(context, armature_obj, items, swap_yz=True, target_
                 raise ValueError(f"Clip '{clip_name}' has invalid FPS")
 
             frame_count, duration, times, samples = _v142_sample_source_to_manifest(
-                context, src, item.action, manifest,
+                context, src, armature_obj, item.action, manifest,
                 item.frame_start, item.frame_end, fps, bool(item.loop), bool(swap_yz)
             )
             print(
