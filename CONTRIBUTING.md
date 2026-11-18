@@ -2,7 +2,7 @@
 
 `extension/` is the Blender extension source root. It contains the manifest,
 Python modules, configuration data, and source for the optional runtime helper.
-The legacy v1.4.9 ZIP stays at the repository root.
+The **Advanced / Legacy Tools** panel is included in the current extension.
 
 Use Blender 4.5 on Windows. From the repository root:
 

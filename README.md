@@ -2,14 +2,11 @@
 
 **Sanctuary Studio 2.2.10 Preview** is a Blender add-on for creating and editing assets and mods for **Sanctuary: Shattered Sun**. It was previously called Sanctuary Modding Toolkit.
 
-## Choose a version
+## Install
 
-| Version | Use it for |
-| --- | --- |
-| **[Studio 2.2.10 Preview](https://github.com/Killercat4444/Sanctuary-Modding-Toolkit/releases/tag/v2.2.10)** | The current project-based tools for browsing, importing, editing, validating, and exporting Sanctuary mods. Download the installable ZIP under Assets, or [build from source](CONTRIBUTING.md). |
-| **[Legacy Toolkit v1.4.9](Sanctuary_Modding_Toolkit_v1.4.9.zip)** | The included, known-working fallback for the established asset export workflow. [Legacy instructions](docs/legacy/README.md) |
+Download the installable ZIP under **Assets** on the [Studio 2.2.10 Preview release](https://github.com/Killercat4444/Sanctuary-Modding-Toolkit/releases/tag/v2.2.10), or [build from source](CONTRIBUTING.md).
 
-Blender 4.5 on Windows is recommended for the preview. Keep one version enabled at a time. In Blender, use **Preferences → Add-ons → Install from Disk** and select the ZIP without extracting it. Then open **3D View → Sidebar → Sanctuary**.
+Blender 4.5 on Windows is recommended. In Blender, use **Preferences → Add-ons → Install from Disk** and select the ZIP without extracting it. Then open **3D View → Sidebar → Sanctuary**. The legacy asset export tools are part of this add-on under **Advanced / Legacy Tools**.
 
 ## What it does
 
@@ -20,7 +17,7 @@ Blender 4.5 on Windows is recommended for the preview. Keep one version enabled 
 
 ## Known issues
 
-**The Blender add-on is still in development.** The newer mod export and packaging workflows are unfinished. Some mods can fail to export or produce a package that still needs changes before it works in-game. If the new workflow blocks an asset export, use the included legacy version for that export. Complete mod packaging can still require additional work.
+**The Blender add-on is still in development.** The newer mod export and packaging workflows are unfinished. Some mods can fail to export or produce a package that still needs changes before it works in-game. If the new workflow blocks an asset export, try **Advanced / Legacy Tools** inside Studio. Complete mod packaging can still require additional work.
 
 - Static validation catches some missing files, IDs, and Lua errors. Confirm the exported mod in-game before sharing it.
 - Effects and shields are Blender previews. Their lighting, distortion, and other visual details can differ from Sanctuary.
