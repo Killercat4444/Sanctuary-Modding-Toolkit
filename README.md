@@ -10,17 +10,6 @@ Blender 4.5 on Windows is recommended. In Blender, use **Preferences → Add-ons
 
 ## Features
 
-- [Mod Importing using unit browser](#mod-importing-using-unit-browser) — Browse and import units from installed mods.
-- [Shield Importing WIP](#shield-importing-wip) — Preview imported shield geometry and materials on supported units.
-- [Unit Browser and Importer](#unit-browser-and-importer) — Import vanilla units with their armatures and, where available, textures and animation clips.
-- [Unit Icon Creator](#unit-icon-creator) — Frame a unit and render its in-game icon.
-- [Animation Previewer](#animation-previewer) — Play imported animation clips on a unit’s armature in Blender.
-- [Lua Creator and editor](#lua-creator-and-editor) — Generate unit Lua from templates and edit it inside Blender.
-
-Studio also includes project validation, packaging tools for Remmy’s Mod Manager, and low-level export controls under **Advanced / Legacy Tools**.
-
-## Demos
-
 ### Mod Importing using unit browser
 
 Browse units from installed mods and import supported models directly into Blender. The browser can load their armatures, textures, and animations when those files are available.
@@ -56,6 +45,8 @@ Select an imported animation clip and play it on the unit’s armature in Blende
 Generate unit Lua from templates, then edit unit settings and behavior through form controls or the source editor inside Blender.
 
 ![Lua Creator and editor](docs/demos/Lua%20Creator%20and%20editor.gif)
+
+Studio also includes project validation, packaging tools for Remmy’s Mod Manager, and low-level export controls under **Advanced / Legacy Tools**.
 
 ## Known issues
 
