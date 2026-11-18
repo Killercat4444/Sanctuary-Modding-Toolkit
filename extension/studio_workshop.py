@@ -331,7 +331,6 @@ def project(layout, context):
         box.operator('sanctuary.mod_export_remmy', text='Export MM ZIP (Recommended)', icon='EXPORT')
         note(box, 'MM manages Lua and assigns custom faction slots dynamically.')
         box.operator('sanctuary.mod_export_standalone', text='Export Standalone ZIP', icon='PACKAGE')
-        box.operator('sanctuary.mod_export_scom', text='Export DYCOM for SCOM', icon='PACKAGE')
         note(box, 'Unit/art mods only. New factions must use MM; standalone slots can conflict.')
         note(box, 'Advanced: validates bootstrap and Lua support. Full game restart required.')
     elif current and (current / 'Remmy' / 'submod.json').is_file():

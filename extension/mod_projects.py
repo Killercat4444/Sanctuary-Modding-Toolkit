@@ -598,29 +598,6 @@ class SANCTUARY_OT_mod_export_standalone(_ProjectOperator):
             return self.fail(exc)
 
 
-class SANCTUARY_OT_mod_export_scom(_ProjectOperator):
-    bl_idname="sanctuary.mod_export_scom"
-    bl_label="Export DYCOM for SCOM"
-    bl_description="Validate the selected SCOM engine and export an additive dycom folder; does not install"
-    def execute(self, context):
-        try:
-            project = active_project(context)
-            from .project_release import legacy_dycom
-            if not legacy_dycom(project): raise ValueError("The SCOM export profile currently requires the DYCOM project")
-            from .studio import engine
-            from .studio_validation import project_preflight
-            from .scom_export import export_scom
-            settings = context.scene.sanctuary_toolkit
-            version = normalize_version(settings.mod_export_version or read_export_version(project))
-            project_preflight(context)
-            target, counts = export_scom(project, engine(context), version=version)
-            write_export_version(project, version)
-            settings.mod_export_version = version
-            self.report({"INFO"}, f"SCOM ZIP: {target.name} ({counts['assets']} assets, {counts['lua']} Lua resources; export only)")
-            return {"FINISHED"}
-        except Exception as exc:
-            return self.fail(exc)
-
 class SANCTUARY_OT_mod_export_uber(_ProjectOperator):
     bl_idname="sanctuary.mod_export_uber"
     bl_label="Export Uber Engineer Tester ZIP"
@@ -655,7 +632,7 @@ class SANCTUARY_OT_mod_open(_ProjectOperator):
 
 CLASSES=(SANCTUARY_OT_mod_create,SANCTUARY_OT_mod_generate_lua,SANCTUARY_OT_mod_export_unit,
          SANCTUARY_OT_mod_deploy,SANCTUARY_OT_mod_pack,SANCTUARY_OT_mod_export_remmy,
-         SANCTUARY_OT_mod_export_standalone,SANCTUARY_OT_mod_export_scom,SANCTUARY_OT_mod_export_uber,
+         SANCTUARY_OT_mod_export_standalone,SANCTUARY_OT_mod_export_uber,
          SANCTUARY_OT_mod_import,SANCTUARY_OT_mod_open)
 
 def register():

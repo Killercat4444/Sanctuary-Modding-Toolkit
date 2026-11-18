@@ -148,7 +148,6 @@ class SANCTUARY_PT_mods(Panel):
             remmy.label(text="Dycom-RemmyMM-<version>.zip with manual installer.",icon="INFO")
             if (current / "Standalone").is_dir():
                 remmy.operator("sanctuary.mod_export_standalone",text="Export Dycom Standalone ZIP",icon="PACKAGE")
-                remmy.operator("sanctuary.mod_export_scom",text="Export DYCOM for SCOM",icon="PACKAGE")
                 remmy.label(text="Raw engine + Mods folders; no manager or installer.",icon="INFO")
         elif current and (current / "Remmy" / "submod.json").is_file():
             remmy.operator("sanctuary.mod_export_uber",text="Export Uber Tester ZIP",icon="EXPORT")
