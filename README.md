@@ -17,59 +17,41 @@ Blender 4.5 on Windows is recommended. In Blender, use **Preferences → Add-ons
 
 ## Demos
 
-<details>
-<summary>Mod Importing using unit browser</summary>
+### Mod Importing using unit browser
 
 Browse units from installed mods and import supported models directly into Blender. The browser can load their armatures, textures, and animations when those files are available.
 
 ![Mod Importing using unit browser](docs/demos/Mod%20Importing%20using%20unit%20browser.gif)
 
-</details>
-
-<details>
-<summary>Shield Importing WIP</summary>
+### Shield Importing WIP
 
 Import a supported shield generator with its shield geometry and materials attached to the unit. The Blender preview is a work in progress and can look different in-game.
 
 ![Shield Importing WIP](docs/demos/Shield%20Importing%20WIP.gif)
 
-</details>
-
-<details>
-<summary>Unit Browser and Importer</summary>
+### Unit Browser and Importer
 
 Browse vanilla Sanctuary units and import their models into Blender along with their armatures. You can also include textures and animation clips when available.
 
 ![Unit Browser and Importer](docs/demos/Unit%20Browser%20and%20Importer.gif)
 
-</details>
-
-<details>
-<summary>Unit Icon Creator</summary>
+### Unit Icon Creator
 
 Set up a camera for a unit, frame the model, and render an icon. Studio saves the PNG, DDS, and sprite files into your project.
 
 ![Unit Icon Creator](docs/demos/Unit%20Icon%20Creator.gif)
 
-</details>
-
-<details>
-<summary>Animation Previewer</summary>
+### Animation Previewer
 
 Select an imported animation clip and play it on the unit’s armature in Blender to check how the model moves.
 
 ![Animation Previewer](docs/demos/Animation%20Previewer.gif)
 
-</details>
-
-<details>
-<summary>Lua Creator and editor</summary>
+### Lua Creator and editor
 
 Generate unit Lua from templates, then edit unit settings and behavior through form controls or the source editor inside Blender.
 
 ![Lua Creator and editor](docs/demos/Lua%20Creator%20and%20editor.gif)
-
-</details>
 
 ## Known issues
 
