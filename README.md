@@ -46,7 +46,32 @@ Generate unit Lua from templates, then edit unit settings and behavior through f
 
 ![Lua Creator and editor](docs/demos/Lua%20Creator%20and%20editor.gif)
 
-Studio also includes project validation, packaging tools for Remmy’s Mod Manager, and low-level export controls under **Advanced / Legacy Tools**.
+### Models, textures, and animation export
+
+- **Model and skeleton export** — Export an LOD0 mesh as `.sanmodel` and its armature as `.sanskeleton`. Export complete unit assets together or use the individual tools under **Advanced / Legacy Tools**.
+- **PNG to DDS texture converter** — Convert albedo, mask or ambient occlusion, and normal PNGs to Sanctuary DDS files. Choose the texture size and mipmap mode. Studio uses the unit material’s texture filenames and refreshes its `.sanmaterial`.
+- **Faction color preview** — Preview team colors on the model in Blender. Use an explicit team mask, preserve existing albedo alpha, or export without a team color mask.
+- **Animation exporting** — Add one or more Blender Actions, set each clip’s frame range and FPS, and export `.sananimation` for a target armature. Baked Pose mode preserves previously baked bone poses. The animation assignment panel can bind clips to unit animation slots.
+- **Model and rig validation** — Check the model and armature, then preview exported assets in a separate Blender scene to inspect the result and replay animation clips before packaging.
+
+### Unit dimensions and behavior
+
+- **Visual size editor** — See collision bounds, footprints, selection boxes, and skirts around the model in the viewport. Fit a shape to the export mesh, copy dimensions from an existing unit, or match the tarmac skirt to the selection size. Apply the changes to the unit’s Lua draft when ready.
+- **Unit template and behavior tools** — Start from a working template for the unit’s role, generate separate host and client behavior scripts, and copy compatible components from a donor unit. Search for named values such as projectile IDs instead of typing them from memory.
+- **Unit sounds and rotating bones** — Preview and assign audio to supported unit fields and configure rotating bones. In-game sound events still need to exist in a sound bank.
+
+### VFX, projectiles, and shields
+
+- **VFX Browser (WIP)** — Search effects by name, ID, category, or the units that use them. Preview supported effects in Blender, browse bundled stock GIFs, or generate a local GIF gallery. See [Known issues](#known-issues) for preview and import limitations.
+- **Effect and projectile editing (WIP)** — Clone an effect and its dependencies into the project, edit settings such as color, intensity, lifetime, or size, and save a private copy. Edit projectile Lua and assign the new projectile or effect to a specific weapon.
+- **Shield material authoring (WIP)** — Edit the shield body and rim materials, preview colors and energy scrolling, and replace pattern or normal textures. Export the shield under a new ID and bind its materials to a unit.
+
+### Mod projects, validation, and packaging
+
+- **Mod project management** — Create, open, and share editable projects as `.SMT` archives. Import existing project archives and configure a custom faction’s tag, commander, icon, and publishing metadata.
+- **Project preflight** — Compile Lua without running it and check references to unit IDs, classes, models, bones, projectiles, effects, and upgrade targets before exporting.
+- **Remmy’s Mod Manager export** — Package project Lua, assets, and declared plugins as a Mod API ZIP. Use this path for new custom factions.
+- **Standalone export and direct install** — Stage a standalone ZIP or install supported unit, art, and behavior projects directly for testing. Compatibility depends on the game build and loader setup.
 
 ## Known issues
 
