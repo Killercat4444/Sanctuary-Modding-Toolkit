@@ -15,6 +15,50 @@ Blender 4.5 on Windows is recommended. In Blender, use **Preferences → Add-ons
 - Helps author unit templates and Lua, check project references, and package mods for Remmy’s Mod Manager.
 - Includes an **Advanced / Legacy Tools** panel for low-level asset export controls.
 
+## Demos
+
+<details>
+<summary>Mod Importing using unit browser</summary>
+
+![Mod Importing using unit browser](docs/demos/Mod%20Importing%20using%20unit%20browser.gif)
+
+</details>
+
+<details>
+<summary>Shield Importing WIP</summary>
+
+![Shield Importing WIP](docs/demos/Shield%20Importing%20WIP.gif)
+
+</details>
+
+<details>
+<summary>Unit Browser and Importer</summary>
+
+![Unit Browser and Importer](docs/demos/Unit%20Browser%20and%20Importer.gif)
+
+</details>
+
+<details>
+<summary>Unit Icon Creator</summary>
+
+![Unit Icon Creator](docs/demos/Unit%20Icon%20Creator.gif)
+
+</details>
+
+<details>
+<summary>Animation Previewer</summary>
+
+![Animation Previewer](docs/demos/Animation%20Previewer.gif)
+
+</details>
+
+<details>
+<summary>Lua Creator and editor</summary>
+
+![Lua Creator and editor](docs/demos/Lua%20Creator%20and%20editor.gif)
+
+</details>
+
 ## Known issues
 
 **The Blender add-on is still in development.** The newer mod export and packaging workflows are unfinished. Some mods can fail to export or produce a package that still needs changes before it works in-game. If the new workflow blocks an asset export, try **Advanced / Legacy Tools** inside Studio. Complete mod packaging can still require additional work.
