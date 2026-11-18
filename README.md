@@ -53,6 +53,7 @@ Studio also includes project validation, packaging tools for Remmy’s Mod Manag
 **The Blender add-on is still in development.** The newer mod export and packaging workflows are unfinished. Some mods can fail to export or produce a package that still needs changes before it works in-game. If the new workflow blocks an asset export, try **Advanced / Legacy Tools** inside Studio. Complete mod packaging can still require additional work.
 
 - Static validation catches some missing files, IDs, and Lua errors. Confirm the exported mod in-game before sharing it.
+- **VFX Browser:** Still a work in progress. Many GIF previews fail to load or play, and some effects may fail to import into Blender or look wrong after import.
 - Effects and shields are Blender previews. Their lighting, distortion, and other visual details can differ from Sanctuary.
 - The source checkout uses your local game assets. The pre-rendered preview library and compiled optional runtime helper are separate from the source files.
 
