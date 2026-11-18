@@ -8,12 +8,16 @@ Download the installable ZIP under **Assets** on the [Studio 2.2.10 Preview rele
 
 Blender 4.5 on Windows is recommended. In Blender, use **Preferences → Add-ons → Install from Disk** and select the ZIP without extracting it. Then open **3D View → Sidebar → Sanctuary**. The legacy asset export tools are part of this add-on under **Advanced / Legacy Tools**.
 
-## What it does
+## Features
 
-- Imports and exports native models, skeletons, animations, materials, and textures.
-- Browses assets from your local game and mod projects, with unit, shield, and effect previews.
-- Helps author unit templates and Lua, check project references, and package mods for Remmy’s Mod Manager.
-- Includes an **Advanced / Legacy Tools** panel for low-level asset export controls.
+- [Mod Importing using unit browser](#mod-importing-using-unit-browser) — Browse and import units from installed mods.
+- [Shield Importing WIP](#shield-importing-wip) — Preview imported shield geometry and materials on supported units.
+- [Unit Browser and Importer](#unit-browser-and-importer) — Import vanilla units with their armatures and, where available, textures and animation clips.
+- [Unit Icon Creator](#unit-icon-creator) — Frame a unit and render its in-game icon.
+- [Animation Previewer](#animation-previewer) — Play imported animation clips on a unit’s armature in Blender.
+- [Lua Creator and editor](#lua-creator-and-editor) — Generate unit Lua from templates and edit it inside Blender.
+
+Studio also includes project validation, packaging tools for Remmy’s Mod Manager, and low-level export controls under **Advanced / Legacy Tools**.
 
 ## Demos
 
