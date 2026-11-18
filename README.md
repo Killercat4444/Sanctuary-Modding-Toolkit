@@ -6,10 +6,10 @@
 
 | Version | Use it for |
 | --- | --- |
-| **Studio 2.2.10 Preview** | The current project-based tools for browsing, importing, editing, validating, and exporting Sanctuary mods. See [Build from source](CONTRIBUTING.md). |
+| **[Studio 2.2.10 Preview](https://github.com/Killercat4444/Sanctuary-Modding-Toolkit/releases/tag/v2.2.10)** | The current project-based tools for browsing, importing, editing, validating, and exporting Sanctuary mods. Download the installable ZIP under Assets, or [build from source](CONTRIBUTING.md). |
 | **[Legacy Toolkit v1.4.9](Sanctuary_Modding_Toolkit_v1.4.9.zip)** | The included, known-working fallback for the established asset export workflow. [Legacy instructions](docs/legacy/README.md) |
 
-Blender 4.5 on Windows is recommended for the preview. Keep one version enabled at a time. For an extension ZIP you build yourself, use **Preferences → Add-ons → Install from Disk**, then open **3D View → Sidebar → Sanctuary**.
+Blender 4.5 on Windows is recommended for the preview. Keep one version enabled at a time. In Blender, use **Preferences → Add-ons → Install from Disk** and select the ZIP without extracting it. Then open **3D View → Sidebar → Sanctuary**.
 
 ## What it does
 
